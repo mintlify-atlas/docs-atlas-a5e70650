@@ -1,0 +1,165 @@
+{
+  "projectType": "framework",
+  "projectName": "Caddy",
+  "projectDescription": "Fast and extensible multi-platform HTTP/1-2-3 web server with automatic HTTPS",
+  "theme": "aspen",
+  "primaryColor": "#1f88e5",
+  "lightColor": "#4ba3f5",
+  "darkColor": "#0d5a9f",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "install"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/modules",
+              "concepts/config-adapters",
+              "concepts/automatic-https"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "config/caddyfile",
+              "config/json",
+              "config/structure"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/static-files",
+              "guides/reverse-proxy",
+              "guides/https",
+              "guides/api",
+              "guides/logging",
+              "guides/metrics"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/run",
+              "cli/start",
+              "cli/stop",
+              "cli/reload",
+              "cli/adapt",
+              "cli/validate",
+              "cli/version",
+              "cli/list-modules",
+              "cli/environ",
+              "cli/storage"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Modules",
+        "groups": [
+          {
+            "group": "HTTP",
+            "pages": [
+              "modules/http/server",
+              "modules/http/handlers",
+              "modules/http/matchers",
+              "modules/http/reverse-proxy",
+              "modules/http/file-server",
+              "modules/http/templates",
+              "modules/http/rewrite",
+              "modules/http/headers"
+            ]
+          },
+          {
+            "group": "TLS",
+            "pages": [
+              "modules/tls/automation",
+              "modules/tls/issuers",
+              "modules/tls/connection-policy",
+              "modules/tls/certificates"
+            ]
+          },
+          {
+            "group": "Other Modules",
+            "pages": [
+              "modules/logging",
+              "modules/pki",
+              "modules/storage",
+              "modules/events"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developer Guide",
+        "groups": [
+          {
+            "group": "Extending Caddy",
+            "pages": [
+              "dev/module-development",
+              "dev/plugin-tutorial",
+              "dev/module-namespaces"
+            ]
+          },
+          {
+            "group": "Building",
+            "pages": [
+              "dev/building",
+              "dev/xcaddy",
+              "dev/custom-builds"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "dev/contributing",
+              "dev/testing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Automatic HTTPS with Let's Encrypt and ZeroSSL",
+    "HTTP/1.1, HTTP/2, and HTTP/3 support",
+    "Powerful reverse proxy with load balancing",
+    "Simple Caddyfile configuration language",
+    "Dynamic JSON API for live configuration updates",
+    "Extensible modular architecture",
+    "Built-in file server with template engine",
+    "On-demand TLS certificate automation",
+    "OpenTelemetry tracing and Prometheus metrics",
+    "Cross-platform with no external dependencies"
+  ],
+  "publicApiSurface": [
+    "caddy run",
+    "caddy start",
+    "caddy stop",
+    "caddy reload",
+    "caddy adapt",
+    "caddy validate",
+    "caddy list-modules",
+    "Admin API (localhost:2019)",
+    "Caddyfile directives",
+    "JSON configuration",
+    "Module interfaces (http.Handler, tls.Issuer, etc.)",
+    "certmagic.Storage",
+    "Config adapters"
+  ]
+}
