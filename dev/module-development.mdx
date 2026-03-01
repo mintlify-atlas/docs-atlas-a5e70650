@@ -1,0 +1,305 @@
+---
+title: Module Development
+description: Learn how to create Caddy modules to extend the server's functionality
+---
+
+Caddy modules are Go libraries that extend Caddy's functionality. Modules can add directives to the Caddyfile, implement new configuration adapters, create HTTP handlers, and even add new server types.
+
+## Understanding Caddy Modules
+
+Modules are the building blocks of Caddy's extensible architecture. Every module:
+
+- Implements the `Module` interface
+- Has a unique ModuleID (namespace)
+- Provides a constructor function
+- Gets compiled into Caddy as a Go package
+
+<Note>
+Caddy modules are compile-time extensions, not runtime plugins. They must be compiled into the binary.
+</Note>
+
+## The Module Interface
+
+Every Caddy module must implement the `Module` interface from `modules.go:54`:
+
+```go
+type Module interface {
+    // CaddyModule returns the module information
+    CaddyModule() ModuleInfo
+}
+```
+
+The `ModuleInfo` struct contains:
+
+```go
+type ModuleInfo struct {
+    // ID is the "full name" of the module
+    // Must be unique and properly namespaced
+    ID ModuleID
+
+    // New returns a pointer to a new, empty instance
+    New func() Module
+}
+```
+
+## Module Lifecycle
+
+When a module is loaded by a host module, the following sequence occurs:
+
+<Steps>
+
+<Step title="Module Instantiation">
+`ModuleInfo.New()` is called to get a new instance of the module.
+</Step>
+
+<Step title="Configuration Unmarshaling">
+The module's configuration is unmarshaled into that instance from JSON.
+</Step>
+
+<Step title="Provisioning">
+If the module implements `Provisioner`, the `Provision()` method is called.
+
+```go
+type Provisioner interface {
+    Provision(Context) error
+}
+```
+</Step>
+
+<Step title="Validation">
+If the module implements `Validator`, the `Validate()` method is called.
+
+```go
+type Validator interface {
+    Validate() error
+}
+```
+</Step>
+
+<Step title="Type Assertion">
+The module is type-asserted to the interface expected by the host module (e.g., `caddyhttp.MiddlewareHandler`).
+</Step>
+
+<Step title="Cleanup">
+When the context is canceled, if the module implements `CleanerUpper`, its `Cleanup()` method is called.
+
+```go
+type CleanerUpper interface {
+    Cleanup() error
+}
+```
+</Step>
+
+</Steps>
+
+## Module Registration
+
+Modules must be registered during the init phase using `RegisterModule()` from `modules.go:138`:
+
+```go
+func init() {
+    caddy.RegisterModule(YourModule{})
+}
+```
+
+<Warning>
+Registration happens at runtime init. The function will panic if the module's info is incomplete or if the module is already registered.
+</Warning>
+
+## Creating Your First Module
+
+Here's a complete example of an HTTP handler module based on the tracing module at `modules/caddyhttp/tracing/module.go:15`:
+
+```go
+package myhandler
+
+import (
+    "net/http"
+    "github.com/caddyserver/caddy/v2"
+    "github.com/caddyserver/caddy/v2/modules/caddyhttp"
+    "go.uber.org/zap"
+)
+
+func init() {
+    caddy.RegisterModule(MyHandler{})
+}
+
+// MyHandler implements an HTTP handler
+type MyHandler struct {
+    // Configuration fields (exported, JSON-tagged)
+    Message string `json:"message,omitempty"`
+    
+    // Internal state (unexported)
+    logger *zap.Logger
+}
+
+// CaddyModule returns the Caddy module information
+func (MyHandler) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "http.handlers.my_handler",
+        New: func() caddy.Module { return new(MyHandler) },
+    }
+}
+
+// Provision sets up the module
+func (m *MyHandler) Provision(ctx caddy.Context) error {
+    m.logger = ctx.Logger()
+    if m.Message == "" {
+        m.Message = "Hello from MyHandler!"
+    }
+    return nil
+}
+
+// Validate ensures the module configuration is valid
+func (m *MyHandler) Validate() error {
+    if m.Message == "" {
+        return fmt.Errorf("message cannot be empty")
+    }
+    return nil
+}
+
+// ServeHTTP implements caddyhttp.MiddlewareHandler
+func (m MyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+    m.logger.Info("handling request", zap.String("message", m.Message))
+    w.Header().Set("X-My-Handler", m.Message)
+    return next.ServeHTTP(w, r)
+}
+
+// Interface guards - compile-time checks
+var (
+    _ caddy.Provisioner           = (*MyHandler)(nil)
+    _ caddy.Validator             = (*MyHandler)(nil)
+    _ caddyhttp.MiddlewareHandler = (*MyHandler)(nil)
+)
+```
+
+## Module Configuration
+
+### JSON Configuration
+
+Modules are configured using JSON. The struct tags control how configuration is unmarshaled:
+
+```go
+type MyModule struct {
+    // Required field
+    Host string `json:"host"`
+    
+    // Optional field with omitempty
+    Port int `json:"port,omitempty"`
+    
+    // Nested module (another Caddy module)
+    HandlerRaw json.RawMessage `json:"handler,omitempty" caddy:"namespace=http.handlers inline_key=handler"`
+}
+```
+
+### Strict Unmarshaling
+
+Caddy uses strict JSON unmarshaling from `modules.go:342` to catch configuration errors:
+
+```go
+func StrictUnmarshalJSON(data []byte, v any) error {
+    dec := json.NewDecoder(bytes.NewReader(data))
+    dec.DisallowUnknownFields()
+    return dec.Decode(v)
+}
+```
+
+Unknown fields in configuration will cause errors.
+
+## Best Practices
+
+<Tip>
+**Keep initialization side-effect free**: The `New()` function and `CaddyModule()` method must have no side effects.
+</Tip>
+
+<Tip>
+**Use Provision for setup**: Put all initialization logic in `Provision()`, not in `New()`.
+</Tip>
+
+<Tip>
+**Implement Cleanup**: If your module allocates resources, implements `CleanerUpper` to prevent memory leaks.
+</Tip>
+
+<Tip>
+**Add interface guards**: Use compile-time interface checks at the end of your file:
+```go
+var (
+    _ caddy.Provisioner = (*MyModule)(nil)
+    _ caddy.Validator   = (*MyModule)(nil)
+)
+```
+</Tip>
+
+<Tip>
+**Follow naming conventions**: Use lowercase with underscores for module IDs (e.g., `http.handlers.file_server`).
+</Tip>
+
+## Common Module Types
+
+### HTTP Handlers
+
+Implement `caddyhttp.MiddlewareHandler`:
+
+```go
+type MiddlewareHandler interface {
+    ServeHTTP(http.ResponseWriter, *http.Request, Handler) error
+}
+```
+
+Namespace: `http.handlers.*`
+
+### HTTP Matchers
+
+Match requests based on criteria.
+
+Namespace: `http.matchers.*`
+
+### TLS Certificate Loaders
+
+Load TLS certificates from various sources.
+
+Namespace: `tls.certificates.*`
+
+### Storage Backends
+
+Implement `certmagic.Storage` for storing TLS certificates.
+
+Namespace: `caddy.storage.*`
+
+### Config Adapters
+
+Convert other config formats to Caddy JSON.
+
+Namespace: `caddy.config_adapters.*`
+
+### Apps
+
+Top-level applications that Caddy runs.
+
+Namespace: empty (e.g., `http`, `tls`)
+
+## Working with Context
+
+The `Context` passed to `Provision()` provides:
+
+- **Logger**: `ctx.Logger()` returns a `*zap.Logger`
+- **Module loading**: `ctx.LoadModule()` loads nested modules
+- **App access**: `ctx.App("appName")` gets app instances
+- **Module info**: `ctx.Module()` returns current module info
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Plugin Tutorial" icon="graduation-cap" href="/dev/plugin-tutorial">
+    Follow a step-by-step tutorial to build a complete plugin
+  </Card>
+  <Card title="Module Namespaces" icon="folder-tree" href="/dev/module-namespaces">
+    Learn about the module namespace system
+  </Card>
+  <Card title="Custom Builds" icon="hammer" href="/dev/custom-builds">
+    Build Caddy with your custom modules
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Contribute your module to Caddy
+  </Card>
+</CardGroup>

@@ -1,0 +1,130 @@
+---
+title: caddy version
+description: Print version information for your Caddy binary
+---
+
+The `caddy version` command prints the version of the Caddy binary.
+
+## Usage
+
+```bash
+caddy version
+```
+
+## Description
+
+Prints the version of this Caddy binary. Version information must be embedded into the binary at compile-time for Caddy to display anything useful with this command.
+
+If Caddy is built from within a version control repository, the Go command will embed the revision hash if available. However, if Caddy is built in the way specified by the official documentation (or by using xcaddy), more detailed version information is printed as given by Go modules.
+
+## Output
+
+The output format includes:
+
+- **Version number** - The Caddy release version (e.g., `v2.7.6`)
+- **Module path** - The Go module path
+- **Module sum** - The Go module checksum
+- **Build metadata** - Compiler version, platform, etc.
+
+### Example Output
+
+```bash
+$ caddy version
+v2.7.6 h1:w0NymbG2m9PcvKWsrXO6EEkY9Ru4FJK8uQbYcev1p3A=
+```
+
+For a more detailed build, the output might look like:
+
+```bash
+v2.7.6 h1:w0NymbG2m9PcvKWsrXO6EEkY9Ru4FJK8uQbYcev1p3A=
+module: github.com/caddyserver/caddy/v2
+version: v2.7.6
+sum: h1:w0NymbG2m9PcvKWsrXO6EEkY9Ru4FJK8uQbYcev1p3A=
+go: go1.21.5
+platform: linux/amd64
+```
+
+## Exit Codes
+
+- `0` - Success
+
+## Version Information
+
+The version string follows the Go module version numbering scheme. See the [Go module documentation](https://go.dev/doc/modules/version-numbers) for more details.
+
+### Version Format
+
+Versions follow semantic versioning:
+
+- `v2.7.6` - Major.Minor.Patch
+- `v2.7.6-beta.1` - Pre-release version
+- `v0.0.0-20230101120000-abc123def456` - Pseudo-version (built from specific commit)
+
+## Building with Version Info
+
+### Using xcaddy
+
+The recommended way to build Caddy with proper version information:
+
+```bash
+xcaddy build v2.7.6
+```
+
+This embeds the version automatically.
+
+### Custom build with version
+
+```bash
+go build -ldflags "-X 'github.com/caddyserver/caddy/v2.CustomVersion=v2.7.6'"
+```
+
+### Building from source
+
+If you build from source without special flags:
+
+```bash
+git clone https://github.com/caddyserver/caddy.git
+cd caddy/cmd/caddy
+go build
+```
+
+The version will be based on the git commit:
+
+```
+v2.8.0-0.20240101120000-abc123def456
+```
+
+## Checking Version Programmatically
+
+In scripts, you can parse the version:
+
+```bash
+VERSION=$(caddy version | awk '{print $1}')
+echo "Caddy version: $VERSION"
+```
+
+Or check if a minimum version is installed:
+
+```bash
+REQUIRED="v2.7.0"
+CURRENT=$(caddy version | awk '{print $1}')
+
+if [ "$(printf '%s\n' "$REQUIRED" "$CURRENT" | sort -V | head -n1)" = "$REQUIRED" ]; then
+    echo "Version check passed"
+else
+    echo "Caddy $REQUIRED or higher required"
+    exit 1
+fi
+```
+
+## Official Releases
+
+Official Caddy releases are available from:
+
+- [GitHub Releases](https://github.com/caddyserver/caddy/releases)
+- [Caddy Download Page](https://caddyserver.com/download)
+- Package managers (apt, yum, brew, etc.)
+
+## Related Commands
+
+- [`caddy list-modules`](/cli/list-modules) - List installed modules and versions

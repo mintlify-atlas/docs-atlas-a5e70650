@@ -1,0 +1,396 @@
+---
+title: Module Namespace System
+description: Understanding Caddy's module namespace organization and naming conventions
+---
+
+Caddy uses a hierarchical namespace system to organize modules. Understanding this system is essential for creating modules that integrate properly with Caddy's architecture.
+
+## Module ID Structure
+
+A ModuleID is a dot-separated string from `modules.go:80`:
+
+```go
+type ModuleID string
+```
+
+The structure is:
+
+```
+<namespace>.<name>
+```
+
+- **Namespace**: All labels except the last (the scope)
+- **Name**: The last label (the module's actual name)
+
+### Examples
+
+<CodeGroup>
+```text Top-level App
+http
+↑
+No namespace (empty) - this is a top-level app
+```
+
+```text HTTP Handler
+http.handlers.file_server
+└─────────┘ └────────┘
+namespace     name
+```
+
+```text Nested Module
+caddy.logging.encoders.json
+└──────────────────┘ └──┘
+namespace          name
+```
+</CodeGroup>
+
+## Namespace Methods
+
+From `modules.go:103`:
+
+```go
+// Namespace returns the namespace portion of a module ID
+func (id ModuleID) Namespace() string {
+    lastDot := strings.LastIndex(string(id), ".")
+    if lastDot < 0 {
+        return "" // Top-level module (app)
+    }
+    return string(id)[:lastDot]
+}
+
+// Name returns the Name (last element) of a module ID
+func (id ModuleID) Name() string {
+    if id == "" {
+        return ""
+    }
+    parts := strings.Split(string(id), ".")
+    return parts[len(parts)-1]
+}
+```
+
+## Standard Namespaces
+
+### Apps (Top-Level)
+
+**Namespace**: Empty (no dots)
+
+Apps are top-level modules that Caddy loads and runs. From `modules/standard/imports.go:3`:
+
+<CodeGroup>
+```text Examples
+http              HTTP server
+tls               TLS certificate management
+admin             Admin API server
+events            Event system
+pki               Public Key Infrastructure
+```
+
+```go Registration
+func (App) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "http",  // No namespace
+        New: func() caddy.Module { return new(App) },
+    }
+}
+```
+</CodeGroup>
+
+### HTTP Handlers
+
+**Namespace**: `http.handlers`
+
+Middleware that processes HTTP requests:
+
+```text
+http.handlers.file_server      Static file serving
+http.handlers.reverse_proxy    Reverse proxy
+http.handlers.static_response  Static responses
+http.handlers.rewrite          URL rewriting
+http.handlers.encode           Response compression
+http.handlers.headers          Header manipulation
+http.handlers.tracing          OpenTelemetry tracing
+```
+
+From `modules/caddyhttp/tracing/module.go:40`:
+
+```go
+func (Tracing) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "http.handlers.tracing",
+        New: func() caddy.Module { return new(Tracing) },
+    }
+}
+```
+
+### HTTP Matchers
+
+**Namespace**: `http.matchers`
+
+Request matching logic:
+
+```text
+http.matchers.host           Match by hostname
+http.matchers.path           Match by path
+http.matchers.method         Match by HTTP method
+http.matchers.header         Match by headers
+http.matchers.query          Match by query parameters
+http.matchers.remote_ip      Match by client IP
+```
+
+### TLS Modules
+
+**Namespace**: `tls.*`
+
+```text
+tls.certificates.load_files     Load certificates from files
+tls.certificates.load_folders   Load from directories
+tls.certificates.automate       Automated certificate management
+tls.issuance.acme              ACME certificate issuers
+tls.issuance.internal          Internal CA issuers
+```
+
+### Storage Backends
+
+**Namespace**: `caddy.storage`
+
+Where Caddy stores TLS certificates and other data:
+
+```text
+caddy.storage.file_system    Local filesystem (default)
+caddy.storage.*              Custom storage backends
+```
+
+### Logging
+
+**Namespace**: `caddy.logging`
+
+```text
+caddy.logging.writers.file      File output
+caddy.logging.writers.stderr    Standard error
+caddy.logging.writers.stdout    Standard output
+caddy.logging.encoders.json     JSON log format
+caddy.logging.encoders.console  Console log format
+```
+
+### Events
+
+**Namespace**: `caddy.events`
+
+Event handling and subscription:
+
+```text
+caddy.events.handlers.*        Event handlers
+```
+
+### Config Adapters
+
+**Namespace**: `caddy.config_adapters`
+
+Convert other config formats to Caddy JSON:
+
+```text
+caddy.config_adapters.caddyfile    Caddyfile adapter (standard)
+caddy.config_adapters.*            Custom adapters
+```
+
+### Network Proxy
+
+**Namespace**: `caddy.network_proxy`
+
+Modules must implement `ProxyFuncProducer` from `modules.go:375`:
+
+```go
+type ProxyFuncProducer interface {
+    ProxyFunc() func(*http.Request) (*url.URL, error)
+}
+```
+
+## Discovering Modules
+
+### Get All Modules in a Namespace
+
+From `modules.go:204`:
+
+```go
+// GetModules returns all modules in the given scope/namespace
+func GetModules(scope string) []ModuleInfo
+```
+
+Example usage:
+
+```go
+// Get all HTTP handlers
+handlers := caddy.GetModules("http.handlers")
+for _, handler := range handlers {
+    fmt.Println(handler.ID)
+}
+
+// Get all top-level apps
+apps := caddy.GetModules("")
+```
+
+<Note>
+Partial scopes are not matched. `"http.handlers"` will not match `"http.handlers.foo.bar"`.
+</Note>
+
+### Get a Specific Module
+
+From `modules.go:164`:
+
+```go
+// GetModule returns module information from its ID
+func GetModule(name string) (ModuleInfo, error) {
+    modulesMu.RLock()
+    defer modulesMu.RUnlock()
+    m, ok := modules[name]
+    if !ok {
+        return ModuleInfo{}, fmt.Errorf("module not registered: %s", name)
+    }
+    return m, nil
+}
+```
+
+### List All Registered Modules
+
+From `modules.go:244`:
+
+```go
+// Modules returns the names of all registered modules
+// in ascending lexicographical order
+func Modules() []string
+```
+
+## Naming Conventions
+
+From the source code and documentation:
+
+<Steps>
+
+<Step title="Use lowercase">
+Module IDs should be lowercase:
+
+```text
+✓ http.handlers.file_server
+✗ http.handlers.FileServer
+✗ http.handlers.File_Server
+```
+</Step>
+
+<Step title="Use underscores for spaces">
+Separate words with underscores, not hyphens or camelCase:
+
+```text
+✓ static_response
+✗ static-response
+✗ staticResponse
+```
+</Step>
+
+<Step title="Choose appropriate namespace">
+Place your module in the correct namespace:
+
+```text
+✓ http.handlers.my_handler    (HTTP middleware)
+✓ http.matchers.my_matcher    (Request matcher)
+✓ tls.issuance.my_issuer      (Certificate issuer)
+✗ my_handler                   (Unclear purpose)
+```
+</Step>
+
+<Step title="Make names descriptive">
+The name should clearly indicate what the module does:
+
+```text
+✓ http.handlers.reverse_proxy
+✓ http.matchers.remote_ip
+✗ http.handlers.rp
+✗ http.matchers.ip
+```
+</Step>
+
+</Steps>
+
+## Reserved Module IDs
+
+From `modules.go:144`:
+
+```go
+if mod.ID == "caddy" || mod.ID == "admin" {
+    panic(fmt.Sprintf("module ID '%s' is reserved", mod.ID))
+}
+```
+
+<Warning>
+The module IDs `caddy` and `admin` are reserved and will cause a panic if used.
+</Warning>
+
+## Module Map Configuration
+
+From `modules.go:122`:
+
+```go
+// ModuleMap is a map that can contain multiple modules,
+// where the map key is the module's name
+type ModuleMap map[string]json.RawMessage
+```
+
+Used in configuration:
+
+```json
+{
+  "apps": {
+    "http": { /* HTTP app config */ },
+    "tls": { /* TLS app config */ }
+  }
+}
+```
+
+The map key is the module name (last part of ID), and the namespace comes from struct tags:
+
+```go
+type Config struct {
+    AppsRaw ModuleMap `json:"apps,omitempty" caddy:"namespace="`
+}
+```
+
+## Creating Custom Namespaces
+
+You can create custom namespaces for your organization:
+
+```text
+mycompany.handlers.auth         Your auth handler
+mycompany.handlers.analytics    Your analytics handler
+mycompany.storage.s3           Your S3 storage backend
+```
+
+<Tip>
+Use a unique prefix (like your company name) to avoid conflicts with other modules.
+</Tip>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Follow Standard Namespaces" icon="folder-tree">
+    Use established namespaces when your module fits an existing category
+  </Card>
+  <Card title="Descriptive Names" icon="tag">
+    Make module names self-documenting and clear
+  </Card>
+  <Card title="Consistent Naming" icon="equals">
+    Follow the lowercase with underscores convention
+  </Card>
+  <Card title="Avoid Conflicts" icon="shield-check">
+    Use unique prefixes for custom namespaces
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Learn how to create modules
+  </Card>
+  <Card title="Plugin Tutorial" icon="graduation-cap" href="/dev/plugin-tutorial">
+    Build a complete plugin
+  </Card>
+</CardGroup>

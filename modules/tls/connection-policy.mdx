@@ -1,0 +1,440 @@
+---
+title: TLS Connection Policies
+description: Configure TLS handshake behavior, cipher suites, protocols, and client authentication
+---
+
+Connection policies govern the establishment of TLS connections. They control cipher suites, protocol versions, client authentication, and other handshake parameters.
+
+## Connection Policy
+
+Connection policies are evaluated in order; the first matching policy will be used to configure the TLS connection.
+
+<Info>
+  An empty policy is valid. Safe and sensible defaults will be used.
+</Info>
+
+### Policy Matching
+
+<ParamField path="match" type="object">
+  How to match this policy with a TLS ClientHello.
+  
+  If this policy is the first to match, it will be used. Available matchers:
+  - `sni` - Server Name Indication
+  - `remote_ip` - Client IP address  
+  - Other custom connection matchers
+</ParamField>
+
+### TLS Protocol Settings
+
+<ParamField path="cipher_suites" type="array">
+  The list of cipher suites to support.
+  
+  <Note>
+    Caddy's defaults are modern and secure. Only customize if you have specific requirements.
+  </Note>
+  
+  Supported cipher suites:
+  - `TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384`
+  - `TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`
+  - `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256`
+  - `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`
+  - `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256`
+  - `TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256`
+  - `TLS_AES_128_GCM_SHA256` (TLS 1.3)
+  - `TLS_AES_256_GCM_SHA384` (TLS 1.3)
+  - `TLS_CHACHA20_POLY1305_SHA256` (TLS 1.3)
+</ParamField>
+
+<ParamField path="curves" type="array">
+  The list of elliptic curves to support.
+  
+  Caddy's defaults are modern and secure.
+  
+  Supported curves:
+  - `x25519`
+  - `secp256r1` (P-256)
+  - `secp384r1` (P-384)
+  - `secp521r1` (P-521)
+</ParamField>
+
+<ParamField path="protocol_min" type="string" default="tls1.2">
+  Minimum TLS protocol version to allow.
+  
+  Values: `tls1.2`, `tls1.3`
+  
+  <Warning>
+    TLS 1.0 and 1.1 are deprecated and insecure. Caddy only supports TLS 1.2 and 1.3.
+  </Warning>
+</ParamField>
+
+<ParamField path="protocol_max" type="string" default="tls1.3">
+  Maximum TLS protocol version to allow.
+  
+  Values: `tls1.2`, `tls1.3`
+</ParamField>
+
+<ParamField path="alpn" type="array">
+  Protocols to use for Application-Layer Protocol Negotiation (ALPN) during the handshake.
+  
+  Default: `["h2", "http/1.1"]` (enables HTTP/2 and HTTP/1.1)
+</ParamField>
+
+### Certificate Selection
+
+<ParamField path="certificate_selection" type="object">
+  How to choose a certificate if more than one matches the given ServerName (SNI) value.
+  
+  Can specify criteria like public key algorithm, serial number, subject organization, etc.
+</ParamField>
+
+<ParamField path="default_sni" type="string">
+  DefaultSNI becomes the ServerName in a ClientHello if there is no policy configured for the empty SNI value.
+</ParamField>
+
+<ParamField path="fallback_sni" type="string">
+  FallbackSNI becomes the ServerName in a ClientHello if the original ServerName doesn't match any certificates in the cache.
+  
+  <Info>EXPERIMENTAL: Subject to change or removal.</Info>
+  
+  Use cases are very niche. Typically useful if a client (like a CDN) passes through the ServerName of the downstream handshake but can accept a certificate with the origin's hostname instead.
+</ParamField>
+
+### Client Authentication
+
+<ParamField path="client_authentication" type="object">
+  Enables and configures TLS client authentication (mutual TLS).
+</ParamField>
+
+<ParamField path="client_authentication.mode" type="string">
+  The mode for authenticating the client.
+  
+  | Mode | Description |
+  |------|-------------|
+  | `request` | Ask clients for a certificate, but allow even if there isn't one; do not verify it |
+  | `require` | Require clients to present a certificate, but do not verify it |
+  | `verify_if_given` | Ask clients for a certificate; allow even if there isn't one, but verify it if there is |
+  | `require_and_verify` | Require clients to present a valid certificate that is verified |
+  
+  <Info>
+    Default is `require_and_verify` if trust pool is provided; otherwise `require`.
+  </Info>
+</ParamField>
+
+<ParamField path="client_authentication.trust_pool" type="object">
+  Certificate authority module which provides the certificate pool of trusted certificates.
+  
+  Available providers:
+  - `inline` - Base64 DER-encoded CA certificates
+  - `file` - Load CA certificates from PEM files
+  - `pki` - Use CA from Caddy's PKI app
+</ParamField>
+
+<ParamField path="client_authentication.verifiers" type="array">
+  Client certificate verification modules.
+  
+  These can perform custom client authentication checks, such as ensuring the certificate is not revoked.
+  
+  Available verifiers:
+  - `leaf` - Verify against specific leaf certificates
+</ParamField>
+
+### Advanced Settings
+
+<ParamField path="drop" type="boolean" default="false">
+  Reject TLS connections that match this policy.
+  
+  <Warning>EXPERIMENTAL: May change.</Warning>
+</ParamField>
+
+<ParamField path="insecure_secrets_log" type="string">
+  Also known as "SSLKEYLOGFILE". TLS secrets will be written to this file in NSS key log format.
+  
+  <Warning>
+    **ENABLING THIS LOG COMPROMISES SECURITY!** This allows other programs or tools to decrypt TLS connections. Only use for debugging and troubleshooting.
+  </Warning>
+  
+  <Info>EXPERIMENTAL: Subject to change or removal.</Info>
+</ParamField>
+
+## Configuration Examples
+
+### Basic Connection Policy
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "tls_connection_policies": [
+            {
+              "match": {
+                "sni": ["example.com", "*.example.com"]
+              },
+              "protocol_min": "tls1.2",
+              "protocol_max": "tls1.3"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Client Authentication (Mutual TLS)
+
+```json
+{
+  "tls_connection_policies": [
+    {
+      "client_authentication": {
+        "mode": "require_and_verify",
+        "trust_pool": {
+          "provider": "file",
+          "pem_files": ["/path/to/client-ca.pem"]
+        }
+      }
+    }
+  ]
+}
+```
+
+### Inline CA Certificates
+
+```json
+{
+  "client_authentication": {
+    "mode": "require_and_verify",
+    "trust_pool": {
+      "provider": "inline",
+      "trusted_ca_certs": [
+        "base64-encoded-der-certificate-1",
+        "base64-encoded-der-certificate-2"
+      ]
+    }
+  }
+}
+```
+
+### Leaf Certificate Verification
+
+```json
+{
+  "client_authentication": {
+    "mode": "require_and_verify",
+    "verifiers": [
+      {
+        "verifier": "leaf",
+        "leaf_certs_loaders": [
+          {
+            "loader": "file",
+            "files": ["/path/to/client-cert.pem"]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Custom Cipher Suites
+
+```json
+{
+  "tls_connection_policies": [
+    {
+      "cipher_suites": [
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+      ],
+      "curves": ["x25519", "secp256r1"]
+    }
+  ]
+}
+```
+
+### SNI-Based Policy Matching
+
+```json
+{
+  "tls_connection_policies": [
+    {
+      "match": {
+        "sni": ["api.example.com"]
+      },
+      "client_authentication": {
+        "mode": "require_and_verify",
+        "trust_pool": {
+          "provider": "file",
+          "pem_files": ["/etc/caddy/api-clients-ca.pem"]
+        }
+      }
+    },
+    {
+      "match": {
+        "sni": ["example.com", "www.example.com"]
+      }
+    }
+  ]
+}
+```
+
+## Caddyfile Configuration
+
+### Basic TLS Settings
+
+```caddyfile
+example.com {
+  tls {
+    protocols tls1.2 tls1.3
+    ciphers TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  }
+}
+```
+
+### Client Authentication
+
+```caddyfile
+example.com {
+  tls {
+    client_auth {
+      mode require_and_verify
+      trust_pool file {
+        pem_file /path/to/client-ca.pem
+      }
+    }
+  }
+}
+```
+
+### Multiple Policies
+
+```caddyfile
+{
+  servers {
+    srv0 {
+      tls_connection_policy {
+        match {
+          sni api.example.com
+        }
+        client_auth {
+          mode require_and_verify
+          trust_pool file {
+            pem_file /etc/caddy/api-ca.pem
+          }
+        }
+      }
+      
+      tls_connection_policy {
+        match {
+          sni example.com
+        }
+      }
+    }
+  }
+}
+
+api.example.com {
+  respond "API Server"
+}
+
+example.com {
+  respond "Web Server"
+}
+```
+
+## Session Tickets
+
+Caddy automatically manages session tickets for resumption unless disabled:
+
+```json
+{
+  "apps": {
+    "tls": {
+      "session_tickets": {
+        "disabled": false
+      }
+    }
+  }
+}
+```
+
+<Warning>
+  Session tickets are automatically disabled when client authentication is enabled to prevent privilege escalation across virtual hosts.
+</Warning>
+
+## Best Practices
+
+<Info>
+  **Default Settings:** Caddy's default cipher suites and protocols are carefully selected for security and compatibility. Only customize if you have specific requirements.
+</Info>
+
+<Warning>
+  **Client Authentication:** When using mutual TLS, ensure proper certificate validation. Use the appropriate mode for your security requirements.
+</Warning>
+
+<Note>
+  **Protocol Versions:** TLS 1.3 offers better performance and security. Only allow TLS 1.2 if you need to support older clients.
+</Note>
+
+<Warning>
+  **Cipher Suites:** Weak cipher suites are not supported by Caddy. The available suites are all considered secure for modern use.
+</Warning>
+
+## Common Use Cases
+
+### API with Client Certificates
+
+```json
+{
+  "tls_connection_policies": [
+    {
+      "match": {
+        "sni": ["api.example.com"]
+      },
+      "client_authentication": {
+        "mode": "require_and_verify",
+        "trust_pool": {
+          "provider": "file",
+          "pem_files": ["/etc/caddy/client-ca.pem"]
+        }
+      },
+      "alpn": ["h2"]
+    }
+  ]
+}
+```
+
+### Internal Services (TLS 1.3 only)
+
+```json
+{
+  "tls_connection_policies": [
+    {
+      "protocol_min": "tls1.3",
+      "protocol_max": "tls1.3"
+    }
+  ]
+}
+```
+
+### Legacy Client Support
+
+If you must support very old clients (not recommended):
+
+```json
+{
+  "tls_connection_policies": [
+    {
+      "protocol_min": "tls1.2",
+      "cipher_suites": [
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+      ]
+    }
+  ]
+}
+```

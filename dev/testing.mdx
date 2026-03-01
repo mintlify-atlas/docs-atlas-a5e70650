@@ -1,0 +1,578 @@
+---
+title: Testing Guide
+description: Comprehensive guide to testing Caddy modules and contributions
+---
+
+Testing is a critical part of Caddy development. This guide covers testing strategies, running tests, and writing effective tests for your modules and contributions.
+
+## Running Tests
+
+From `README.md:136`, Caddy uses Go's built-in testing framework.
+
+### Run All Tests
+
+```bash
+go test ./...
+```
+
+This runs all tests in the Caddy repository.
+
+### Run Tests for Specific Module
+
+```bash
+go test ./modules/caddyhttp/tracing/
+```
+
+### Run Tests with Verbose Output
+
+```bash
+go test -v ./...
+```
+
+### Run Specific Test Function
+
+```bash
+go test -v -run TestFunctionName ./package
+```
+
+### Run Tests with Coverage
+
+```bash
+go test -cover ./...
+```
+
+Get detailed coverage report:
+
+```bash
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+## Test File Structure
+
+Test files follow Go conventions:
+
+- Named `*_test.go` (e.g., `module_test.go`)
+- In the same package as the code being tested
+- Test functions start with `Test` (e.g., `TestProvision`)
+
+### Example Test File Structure
+
+```go
+package mymodule
+
+import (
+    "testing"
+    "github.com/caddyserver/caddy/v2"
+)
+
+func TestModuleProvision(t *testing.T) {
+    // Test provision logic
+}
+
+func TestModuleValidate(t *testing.T) {
+    // Test validation logic
+}
+
+func TestServeHTTP(t *testing.T) {
+    // Test HTTP handler
+}
+```
+
+## Testing Module Lifecycle
+
+### Testing CaddyModule()
+
+```go
+func TestCaddyModule(t *testing.T) {
+    m := MyModule{}
+    info := m.CaddyModule()
+    
+    if info.ID != "http.handlers.my_module" {
+        t.Errorf("expected ID 'http.handlers.my_module', got '%s'", info.ID)
+    }
+    
+    if info.New == nil {
+        t.Error("New function should not be nil")
+    }
+    
+    instance := info.New()
+    if instance == nil {
+        t.Error("New() should return non-nil instance")
+    }
+}
+```
+
+### Testing Provision
+
+```go
+func TestProvision(t *testing.T) {
+    m := &MyModule{
+        SomeField: "test",
+    }
+    
+    ctx, cancel := caddy.NewContext(caddy.Context{})
+    defer cancel()
+    
+    err := m.Provision(ctx)
+    if err != nil {
+        t.Fatalf("Provision() failed: %v", err)
+    }
+    
+    // Verify provisioning set up internal state
+    if m.logger == nil {
+        t.Error("logger should be set after Provision()")
+    }
+}
+```
+
+### Testing Validate
+
+```go
+func TestValidate(t *testing.T) {
+    tests := []struct {
+        name    string
+        module  *MyModule
+        wantErr bool
+    }{
+        {
+            name:    "valid config",
+            module:  &MyModule{RequiredField: "value"},
+            wantErr: false,
+        },
+        {
+            name:    "missing required field",
+            module:  &MyModule{},
+            wantErr: true,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            err := tt.module.Validate()
+            if (err != nil) != tt.wantErr {
+                t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+            }
+        })
+    }
+}
+```
+
+## Testing HTTP Handlers
+
+### Basic Handler Test
+
+Based on patterns from the codebase:
+
+```go
+func TestServeHTTP(t *testing.T) {
+    handler := &MyHandler{
+        HeaderName: "X-Test",
+        HeaderValue: "test-value",
+    }
+    
+    // Create test request
+    req := httptest.NewRequest("GET", "/test", nil)
+    rec := httptest.NewRecorder()
+    
+    // Create next handler
+    next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+        w.WriteHeader(http.StatusOK)
+        return nil
+    })
+    
+    // Execute handler
+    err := handler.ServeHTTP(rec, req, next)
+    if err != nil {
+        t.Fatalf("ServeHTTP() failed: %v", err)
+    }
+    
+    // Check response
+    if rec.Code != http.StatusOK {
+        t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+    }
+    
+    // Verify header was set
+    if got := rec.Header().Get("X-Test"); got != "test-value" {
+        t.Errorf("expected header value 'test-value', got '%s'", got)
+    }
+}
+```
+
+### Testing with Context and Replacer
+
+```go
+func TestServeHTTPWithContext(t *testing.T) {
+    handler := &MyHandler{}
+    
+    req := httptest.NewRequest("GET", "/test", nil)
+    
+    // Add Caddy context
+    repl := caddy.NewReplacer()
+    ctx := context.WithValue(req.Context(), caddy.ReplacerCtxKey, repl)
+    req = req.WithContext(ctx)
+    
+    rec := httptest.NewRecorder()
+    
+    next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+        return nil
+    })
+    
+    err := handler.ServeHTTP(rec, req, next)
+    if err != nil {
+        t.Fatalf("ServeHTTP() failed: %v", err)
+    }
+}
+```
+
+## Testing Configuration Unmarshaling
+
+### Testing JSON Unmarshaling
+
+```go
+func TestUnmarshalJSON(t *testing.T) {
+    jsonConfig := []byte(`{
+        "field1": "value1",
+        "field2": 42
+    }`)
+    
+    var m MyModule
+    err := json.Unmarshal(jsonConfig, &m)
+    if err != nil {
+        t.Fatalf("Unmarshal failed: %v", err)
+    }
+    
+    if m.Field1 != "value1" {
+        t.Errorf("expected Field1='value1', got '%s'", m.Field1)
+    }
+    
+    if m.Field2 != 42 {
+        t.Errorf("expected Field2=42, got %d", m.Field2)
+    }
+}
+```
+
+### Testing Caddyfile Unmarshaling
+
+```go
+func TestUnmarshalCaddyfile(t *testing.T) {
+    input := `myhandler {
+        field1 value1
+        field2 42
+    }`
+    
+    d := caddyfile.NewTestDispenser(input)
+    m := &MyModule{}
+    
+    err := m.UnmarshalCaddyfile(d)
+    if err != nil {
+        t.Fatalf("UnmarshalCaddyfile() failed: %v", err)
+    }
+    
+    if m.Field1 != "value1" {
+        t.Errorf("expected Field1='value1', got '%s'", m.Field1)
+    }
+}
+```
+
+## Table-Driven Tests
+
+From Go best practices, use table-driven tests for multiple scenarios:
+
+```go
+func TestMultipleScenarios(t *testing.T) {
+    tests := []struct {
+        name        string
+        input       string
+        expected    string
+        expectError bool
+    }{
+        {
+            name:        "valid input",
+            input:       "test",
+            expected:    "TEST",
+            expectError: false,
+        },
+        {
+            name:        "empty input",
+            input:       "",
+            expected:    "",
+            expectError: true,
+        },
+        {
+            name:        "unicode input",
+            input:       "café",
+            expected:    "CAFÉ",
+            expectError: false,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result, err := MyFunction(tt.input)
+            
+            if tt.expectError {
+                if err == nil {
+                    t.Error("expected error but got none")
+                }
+                return
+            }
+            
+            if err != nil {
+                t.Fatalf("unexpected error: %v", err)
+            }
+            
+            if result != tt.expected {
+                t.Errorf("expected '%s', got '%s'", tt.expected, result)
+            }
+        })
+    }
+}
+```
+
+## Benchmarking
+
+From `CONTRIBUTING.md:40`, optimizations should include benchmarks:
+
+```go
+func BenchmarkServeHTTP(b *testing.B) {
+    handler := &MyHandler{
+        HeaderName: "X-Test",
+        HeaderValue: "test",
+    }
+    
+    req := httptest.NewRequest("GET", "/", nil)
+    next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+        return nil
+    })
+    
+    b.ResetTimer()
+    for i := 0; i < b.N; i++ {
+        rec := httptest.NewRecorder()
+        handler.ServeHTTP(rec, req, next)
+    }
+}
+```
+
+Run benchmarks:
+
+```bash
+go test -bench=. ./...
+```
+
+Compare benchmarks:
+
+```bash
+# Baseline
+go test -bench=. -benchmem > old.txt
+
+# After changes
+go test -bench=. -benchmem > new.txt
+
+# Compare
+go install golang.org/x/perf/cmd/benchstat@latest
+benchstat old.txt new.txt
+```
+
+## Integration Tests
+
+Caddy has integration tests in `caddytest/integration/`:
+
+```go
+func TestIntegration(t *testing.T) {
+    tester := caddytest.NewTester(t)
+    tester.InitServer(`
+    {
+        http_port 9080
+        https_port 9443
+    }
+    
+    localhost:9080 {
+        respond "Hello World"
+    }
+    `, "caddyfile")
+    
+    // Test the server
+    tester.AssertGetResponse("http://localhost:9080/", 200, "Hello World")
+}
+```
+
+## Best Practices
+
+From `CONTRIBUTING.md:38` and Go testing conventions:
+
+<Steps>
+
+<Step title="Write tests for new code">
+Every new feature or bug fix should include tests.
+</Step>
+
+<Step title="Test edge cases">
+Test boundary conditions, empty inputs, nil values, etc.
+</Step>
+
+<Step title="Use descriptive test names">
+```go
+func TestHandlerReturnsErrorOnNilRequest(t *testing.T) { ... }
+```
+</Step>
+
+<Step title="Keep tests independent">
+Tests should not depend on each other or global state.
+</Step>
+
+<Step title="Use t.Helper() for test utilities">
+```go
+func assertNoError(t *testing.T, err error) {
+    t.Helper()
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+}
+```
+</Step>
+
+<Step title="Clean up resources">
+```go
+func TestWithCleanup(t *testing.T) {
+    ctx, cancel := caddy.NewContext(caddy.Context{})
+    defer cancel() // Always clean up
+    
+    // Test code...
+}
+```
+</Step>
+
+<Step title="Test actual behavior">
+From `CONTRIBUTING.md:173`, make sure tests fail without the change and pass with it.
+</Step>
+
+</Steps>
+
+## CI/CD Testing
+
+From `README.md:21`, Caddy uses GitHub Actions for CI:
+
+```yaml
+name: Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+```
+
+## Race Detection
+
+Test for race conditions:
+
+```bash
+go test -race ./...
+```
+
+<Warning>
+Always run race detection before submitting PRs. Race conditions can cause subtle bugs.
+</Warning>
+
+## Testing Tips
+
+### Mock Next Handler
+
+```go
+type mockHandler struct {
+    called bool
+}
+
+func (m *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) error {
+    m.called = true
+    return nil
+}
+
+func TestCallsNextHandler(t *testing.T) {
+    handler := &MyHandler{}
+    mock := &mockHandler{}
+    
+    req := httptest.NewRequest("GET", "/", nil)
+    rec := httptest.NewRecorder()
+    
+    handler.ServeHTTP(rec, req, mock)
+    
+    if !mock.called {
+        t.Error("next handler was not called")
+    }
+}
+```
+
+### Test Error Handling
+
+```go
+func TestErrorHandling(t *testing.T) {
+    handler := &MyHandler{}
+    
+    next := caddyhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
+        return fmt.Errorf("next handler error")
+    })
+    
+    req := httptest.NewRequest("GET", "/", nil)
+    rec := httptest.NewRecorder()
+    
+    err := handler.ServeHTTP(rec, req, next)
+    if err == nil {
+        t.Error("expected error to be propagated")
+    }
+}
+```
+
+### Test with Different Configurations
+
+```go
+func TestConfigurations(t *testing.T) {
+    configs := []MyModule{
+        {Field1: "value1"},
+        {Field1: "value2", Field2: 100},
+        {Field2: 200},
+    }
+    
+    for i, config := range configs {
+        t.Run(fmt.Sprintf("config_%d", i), func(t *testing.T) {
+            // Test each configuration
+        })
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Submit your tested code
+  </Card>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Build modules with testing in mind
+  </Card>
+  <Card title="Building from Source" icon="code" href="/dev/building">
+    Set up your test environment
+  </Card>
+  <Card title="Plugin Tutorial" icon="graduation-cap" href="/dev/plugin-tutorial">
+    Build a fully-tested plugin
+  </Card>
+</CardGroup>

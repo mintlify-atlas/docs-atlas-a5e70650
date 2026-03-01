@@ -1,0 +1,387 @@
+---
+title: caddy storage
+description: Export and import Caddy's storage (TLS certificates, ACME data, etc.)
+---
+
+The `caddy storage` command provides subcommands for working with Caddy's storage, allowing you to export and import storage contents like TLS certificates and ACME data.
+
+<Warning>
+**EXPERIMENTAL**: This command may be changed or removed in future versions.
+</Warning>
+
+## Usage
+
+```bash
+caddy storage <subcommand> [flags]
+```
+
+## Description
+
+Allows exporting and importing Caddy's storage contents. The storage contains:
+
+- **TLS certificates** (from ACME or loaded files)
+- **ACME account data** (account keys, registration info)
+- **ACME challenge data** (for DNS and other challenges)
+- **OCSP staples** and other TLS-related data
+
+This is useful for:
+- **Migrating** between storage backends
+- **Backing up** certificates and keys
+- **Transferring** data between servers
+- **Switching** storage configurations
+
+<Note>
+When importing to or exporting from `file_system` storage (the default), the command should be run as the user that owns the associated root path.
+</Note>
+
+## Subcommands
+
+### export
+
+Exports storage assets as a tarball.
+
+```bash
+caddy storage export --config <path> --output <path>
+```
+
+### import
+
+Imports storage assets from a tarball.
+
+```bash
+caddy storage import --config <path> --input <path>
+```
+
+## Combining Export and Import
+
+The two commands can be combined in a pipeline to transfer directly from one storage to another:
+
+```bash
+caddy storage export --config Caddyfile.old --output - | \
+    caddy storage import --config Caddyfile.new --input -
+```
+
+The `-` argument refers to stdout and stdin, respectively.
+
+## Export Flags
+
+<ParamField path="--config" type="string" required>
+  Input configuration file (required).
+  
+  The storage configuration will be extracted from this config.
+</ParamField>
+
+<ParamField path="--output" type="string" required>
+  Output path for the tarball (required).
+  
+  Use `-` for stdout (useful for piping).
+</ParamField>
+
+## Import Flags
+
+<ParamField path="--config" type="string" required>
+  Configuration file to load (required).
+  
+  The storage configuration will be extracted from this config.
+</ParamField>
+
+<ParamField path="--input" type="string" required>
+  Path to tarball to import (required).
+  
+  Use `-` for stdin (useful for piping).
+</ParamField>
+
+## Examples
+
+### Export to file
+
+```bash
+caddy storage export --config Caddyfile --output backup.tar
+```
+
+Creates `backup.tar` containing all storage assets.
+
+### Import from file
+
+```bash
+caddy storage import --config Caddyfile --input backup.tar
+```
+
+Restores storage assets from `backup.tar`.
+
+### Export to stdout
+
+```bash
+caddy storage export --config Caddyfile --output -
+```
+
+Writes tarball to stdout (useful for piping or compression).
+
+### Import from stdin
+
+```bash
+cat backup.tar | caddy storage import --config Caddyfile --input -
+```
+
+### Compress backup
+
+```bash
+caddy storage export --config Caddyfile --output - | gzip > backup.tar.gz
+```
+
+### Restore from compressed backup
+
+```bash
+gunzip -c backup.tar.gz | caddy storage import --config Caddyfile --input -
+```
+
+### Transfer between servers
+
+```bash
+# On source server
+caddy storage export --config Caddyfile --output - | \
+    ssh user@destination 'caddy storage import --config /etc/caddy/Caddyfile --input -'
+```
+
+### Migrate storage backends
+
+Old config using file storage:
+
+```caddyfile
+# Caddyfile.old
+{
+    storage file_system {
+        root /var/lib/caddy/old
+    }
+}
+```
+
+New config using different storage:
+
+```caddyfile
+# Caddyfile.new
+{
+    storage file_system {
+        root /var/lib/caddy/new
+    }
+}
+```
+
+Migrate:
+
+```bash
+caddy storage export --config Caddyfile.old --output - | \
+    caddy storage import --config Caddyfile.new --input -
+```
+
+### Backup before upgrade
+
+```bash
+# Create backup
+caddy storage export --config /etc/caddy/Caddyfile --output ~/caddy-backup-$(date +%Y%m%d).tar
+
+# Upgrade Caddy
+sudo apt update && sudo apt upgrade caddy
+
+# If something goes wrong, restore
+# caddy storage import --config /etc/caddy/Caddyfile --input ~/caddy-backup-YYYYMMDD.tar
+```
+
+## Exit Codes
+
+- `0` - Success
+- `1` - Failed startup (invalid config or missing flags)
+- `2` - Failed quit (error during export/import)
+
+## What Gets Exported
+
+The export includes all "terminal" keys from the storage:
+
+- **Certificates** - `certificates/acme/.../*.crt`
+- **Private keys** - `certificates/acme/.../*.key`
+- **Account keys** - `acme/.../*.json`
+- **OCSP staples** - Various cached data
+- **Locks** (if present at export time)
+
+The exact structure depends on your storage backend and ACME usage.
+
+## Tarball Format
+
+The export creates a standard tar archive:
+
+```bash
+# List contents
+tar -tf backup.tar
+
+# Extract to inspect
+mkdir inspect
+tar -xf backup.tar -C inspect
+ls -R inspect
+```
+
+Example contents:
+
+```
+certificates/acme/acme-v02.api.letsencrypt.org-directory/example.com/example.com.crt
+certificates/acme/acme-v02.api.letsencrypt.org-directory/example.com/example.com.key
+acme/acme-v02.api.letsencrypt.org-directory/users/...
+```
+
+## Storage Backends
+
+Caddy supports different storage backends:
+
+### File System (default)
+
+```caddyfile
+{
+    storage file_system {
+        root /var/lib/caddy
+    }
+}
+```
+
+### Consul
+
+```caddyfile
+{
+    storage consul {
+        address "localhost:8500"
+        prefix "caddy"
+    }
+}
+```
+
+### Redis
+
+```caddyfile
+{
+    storage redis {
+        address "localhost:6379"
+        prefix "caddy"
+    }
+}
+```
+
+### S3
+
+```caddyfile
+{
+    storage s3 {
+        bucket "my-caddy-storage"
+        region "us-east-1"
+    }
+}
+```
+
+## Migrating Between Storage Types
+
+### File System → Consul
+
+```bash
+# Export from file system
+caddy storage export --config Caddyfile.fs --output certs.tar
+
+# Import to Consul
+caddy storage import --config Caddyfile.consul --input certs.tar
+```
+
+### Consul → File System
+
+```bash
+caddy storage export --config Caddyfile.consul --output certs.tar
+caddy storage import --config Caddyfile.fs --input certs.tar
+```
+
+## Caveats
+
+<Warning>
+- **Keys are removed** during export if they're deleted from storage while export is in progress (warning will be logged)
+- **Permissions** matter for file_system storage - run as the correct user
+- **Storage must be configured** in the config file for both export and import
+- **Concurrent access** during export may lead to inconsistent state
+</Warning>
+
+## Best Practices
+
+### 1. Stop Caddy during migration
+
+```bash
+sudo systemctl stop caddy
+caddy storage export --config /etc/caddy/Caddyfile --output backup.tar
+# ... change storage config ...
+caddy storage import --config /etc/caddy/Caddyfile --input backup.tar
+sudo systemctl start caddy
+```
+
+### 2. Verify backup integrity
+
+```bash
+# Create backup
+caddy storage export --config Caddyfile --output backup.tar
+
+# Verify it's a valid tar
+tar -tf backup.tar > /dev/null
+if [ $? -eq 0 ]; then
+    echo "Backup is valid"
+fi
+```
+
+### 3. Regular backups
+
+```bash
+#!/bin/bash
+# backup-caddy-storage.sh
+BACKUP_DIR="/backups/caddy"
+mkdir -p "$BACKUP_DIR"
+
+caddy storage export \
+    --config /etc/caddy/Caddyfile \
+    --output "$BACKUP_DIR/caddy-storage-$(date +%Y%m%d-%H%M%S).tar"
+
+# Keep only last 7 days
+find "$BACKUP_DIR" -name 'caddy-storage-*.tar' -mtime +7 -delete
+```
+
+### 4. Encrypt sensitive backups
+
+```bash
+# Export and encrypt
+caddy storage export --config Caddyfile --output - | \
+    gpg --encrypt --recipient your@email.com > backup.tar.gpg
+
+# Decrypt and import
+gpg --decrypt backup.tar.gpg | \
+    caddy storage import --config Caddyfile --input -
+```
+
+## Troubleshooting
+
+### Permission errors
+
+```
+Error: opening output file: permission denied
+```
+
+Run as the correct user or use sudo:
+
+```bash
+sudo -u caddy caddy storage export --config /etc/caddy/Caddyfile --output backup.tar
+```
+
+### Storage not configured
+
+If the config doesn't specify storage, Caddy uses file_system storage with default paths. Make sure your config is complete.
+
+### Empty export
+
+If export produces an empty or very small tarball:
+
+- Check that certificates exist in storage
+- Verify storage path is correct
+- Ensure ACME has issued certificates
+
+## Related Commands
+
+- [`caddy run`](/cli/run) - Start Caddy with storage config
+- [`caddy validate`](/cli/validate) - Validate storage configuration

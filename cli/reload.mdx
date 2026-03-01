@@ -1,0 +1,217 @@
+---
+title: caddy reload
+description: Reload the Caddy configuration without downtime
+---
+
+The `caddy reload` command changes the config of a running Caddy instance without downtime.
+
+## Usage
+
+```bash
+caddy reload --config <path> [flags]
+```
+
+## Description
+
+Gives the running Caddy instance a new configuration. This has the same effect as POSTing a document to the `/load` API endpoint, but is convenient for simple workflows revolving around config files.
+
+Since the admin endpoint is configurable, the endpoint configuration is loaded from the `--address` flag if specified; otherwise it is loaded from the given config file; otherwise the default is assumed.
+
+<Note>
+Reloading the config is **zero-downtime** in most cases. Caddy will gracefully transition from the old config to the new one.
+</Note>
+
+## Flags
+
+<ParamField path="--config" type="string" required>
+  Configuration file to load (required).
+  
+  This is the new configuration you want to apply to the running Caddy instance.
+</ParamField>
+
+<ParamField path="--adapter" type="string" default="">
+  Name of config adapter to apply.
+  
+  Required if the config file is not in JSON format.
+</ParamField>
+
+<ParamField path="--address" type="string" default="">
+  Address of the administration listener, if different from config.
+  
+  Overrides the admin address determined from the config file.
+</ParamField>
+
+<ParamField path="--force" type="boolean" default="false">
+  Force config reload, even if it is the same as the current config.
+  
+  By default, Caddy will skip reloading if the new config is identical to the current one.
+</ParamField>
+
+## Examples
+
+### Reload with default admin address
+
+```bash
+caddy reload --config Caddyfile
+```
+
+### Reload with custom admin address
+
+```bash
+caddy reload --config Caddyfile --address localhost:2020
+```
+
+### Reload with adapter
+
+```bash
+caddy reload --config caddy.yaml --adapter yaml
+```
+
+### Force reload even if config is unchanged
+
+```bash
+caddy reload --config Caddyfile --force
+```
+
+This is useful if you want to ensure all modules are reinitialized.
+
+### Reload with JSON config
+
+```bash
+caddy reload --config config.json
+```
+
+## Exit Codes
+
+- `0` - Success (config reloaded)
+- `1` - Failed (config invalid or could not reload)
+
+## How It Works
+
+The `caddy reload` command:
+
+1. Loads the config file from disk
+2. Adapts it to JSON if an adapter is specified
+3. Determines the admin API address from:
+   - The `--address` flag (highest priority)
+   - The config file being loaded (parses admin config)
+   - Default address `localhost:2019`
+4. Sends a POST request to `/load` on the admin API with:
+   - The new config as the request body
+   - `Cache-Control: must-revalidate` header (if `--force` is used)
+   - `Caddy-Config-Source-File` header (original config file)
+   - `Caddy-Config-Source-Adapter` header (adapter used)
+5. Returns success or failure
+
+## Zero-Downtime Reloads
+
+Caddy's config reloads are designed to be zero-downtime:
+
+1. **New config is validated** before applying
+2. **New listeners are started** before old ones are closed
+3. **Active connections continue** on old listeners
+4. **New connections use** the new config
+5. **Old resources are cleaned up** after active connections finish
+
+<Note>
+In some rare cases, a brief interruption may occur (e.g., if binding to a new port that conflicts with the old one).
+</Note>
+
+## Config Caching
+
+By default, Caddy will not reload the config if it's identical to the current one. This is an optimization to avoid unnecessary work.
+
+To bypass this cache, use the `--force` flag:
+
+```bash
+caddy reload --config Caddyfile --force
+```
+
+## Automatic Reloads
+
+You can also reload configs automatically:
+
+### Using --watch flag
+
+<Warning>
+Only for development!
+</Warning>
+
+```bash
+caddy run --config Caddyfile --watch
+```
+
+### Using a file watcher
+
+```bash
+# Using entr (Linux/macOS)
+echo Caddyfile | entr -r caddy reload --config Caddyfile
+
+# Using inotifywait (Linux)
+while inotifywait -e modify Caddyfile; do
+    caddy reload --config Caddyfile
+done
+```
+
+### Using systemd path unit
+
+Create `/etc/systemd/system/caddy-reload.path`:
+
+```ini
+[Unit]
+Description=Watch Caddyfile for changes
+
+[Path]
+PathModified=/etc/caddy/Caddyfile
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Create `/etc/systemd/system/caddy-reload.service`:
+
+```ini
+[Unit]
+Description=Reload Caddy
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/caddy reload --config /etc/caddy/Caddyfile
+```
+
+Enable:
+
+```bash
+sudo systemctl enable --now caddy-reload.path
+```
+
+## Troubleshooting
+
+### Config validation errors
+
+If your new config has errors, the reload will fail and the old config will remain active:
+
+```
+Error: adapting config using caddyfile: Caddyfile:5: unknown directive: invalid_directive
+```
+
+Fix the errors in your config and try again.
+
+### Admin API not accessible
+
+```
+Error: performing request: dial tcp 127.0.0.1:2019: connect: connection refused
+```
+
+Make sure:
+1. Caddy is running
+2. The admin API is enabled
+3. You're using the correct admin address
+
+## Related Commands
+
+- [`caddy run`](/cli/run) - Start Caddy in the foreground
+- [`caddy start`](/cli/start) - Start Caddy in the background
+- [`caddy stop`](/cli/stop) - Stop Caddy
+- [`caddy validate`](/cli/validate) - Validate a config before reloading
+- [`caddy adapt`](/cli/adapt) - Preview adapted config

@@ -1,0 +1,394 @@
+---
+title: Storage Module
+description: Configure persistent storage for certificates, OCSP staples, and other Caddy data
+---
+
+The storage module provides an abstraction layer for persisting data in Caddy. This is primarily used by the TLS certificate management system to store certificates, private keys, OCSP staples, and other metadata.
+
+## Overview
+
+Caddy's storage system is modular and pluggable, allowing you to choose different storage backends based on your infrastructure needs.
+
+### Storage Interface
+
+All storage modules must implement the `certmagic.Storage` interface, which provides:
+- **Store** - Save data to storage
+- **Load** - Retrieve data from storage
+- **Delete** - Remove data from storage
+- **Exists** - Check if data exists
+- **List** - List keys in storage
+- **Stat** - Get metadata about stored data
+- **Lock/Unlock** - Distributed locking for coordination
+
+## Default Storage
+
+By default, Caddy uses file system storage located at:
+
+<Note>
+**Linux/Unix**: `~/.local/share/caddy`  
+**macOS**: `~/Library/Application Support/Caddy`  
+**Windows**: `%AppData%\Caddy`  
+**Android**: `/sdcard`
+</Note>
+
+You can customize the data directory using the `XDG_DATA_HOME` environment variable:
+
+```bash
+export XDG_DATA_HOME=/custom/data/dir
+caddy start
+```
+
+## File System Storage
+
+Module ID: `caddy.storage.file_system`
+
+The default storage backend stores data on the local file system.
+
+### Configuration
+
+<ParamField path="root" type="string">
+  Root directory for storage. Defaults to `AppDataDir()`.
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/var/lib/caddy"
+  }
+}
+```
+
+```caddyfile Caddyfile
+{
+  storage file_system /var/lib/caddy
+}
+```
+</CodeGroup>
+
+### Directory Structure
+
+The file system storage organizes data as follows:
+
+```
+{root}/
+├── certificates/
+│   └── {ca_name}/
+│       └── {domain}/
+│           ├── {domain}.crt    # Certificate
+│           ├── {domain}.key    # Private key
+│           └── {domain}.json   # Metadata
+├── locks/                      # Distributed locks
+├── ocsp/                       # OCSP staples
+└── pki/                        # PKI authorities
+    └── authorities/
+        └── {ca_id}/
+            ├── root.crt
+            ├── root.key
+            ├── intermediate.crt
+            └── intermediate.key
+```
+
+## Storage Converter Interface
+
+Custom storage modules must implement the `StorageConverter` interface:
+
+```go
+type StorageConverter interface {
+    CertMagicStorage() (certmagic.Storage, error)
+}
+```
+
+This allows Caddy to adapt any CertMagic storage implementation into the Caddy configuration API.
+
+## Global vs. Module-Specific Storage
+
+You can configure storage at different levels:
+
+### Global Storage
+
+Set storage for all apps:
+
+```json
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/var/lib/caddy"
+  },
+  "apps": {
+    "http": { ... },
+    "tls": { ... }
+  }
+}
+```
+
+### Per-CA Storage
+
+Different storage for specific certificate authorities:
+
+```json
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "secure-ca": {
+          "name": "Secure CA",
+          "storage": {
+            "module": "file_system",
+            "root": "/secure/pki/storage"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+This is useful for:
+- Keeping signing keys separate from leaf certificates
+- Using different security policies for different CAs
+- Isolating CA data for compliance requirements
+
+## Environment-Based Paths
+
+Caddy respects standard environment variables for determining storage paths:
+
+### Configuration Directory
+
+**Environment Variable**: `XDG_CONFIG_HOME`
+
+```bash
+export XDG_CONFIG_HOME=/etc/caddy
+```
+
+Fallback logic:
+1. `$XDG_CONFIG_HOME/caddy`
+2. `$HOME/.config/caddy` (Linux/Unix)
+3. `%AppData%\Caddy` (Windows)
+4. `$HOME/Library/Application Support/Caddy` (macOS)
+5. `./caddy` (fallback)
+
+### Data Directory
+
+**Environment Variable**: `XDG_DATA_HOME`
+
+```bash
+export XDG_DATA_HOME=/var/lib/caddy
+```
+
+Fallback logic:
+1. `$XDG_DATA_HOME/caddy`
+2. `%AppData%\Caddy` (Windows)
+3. `$HOME/Library/Application Support/Caddy` (macOS)
+4. `$home/lib/caddy` (Plan 9)
+5. `$HOME/caddy` (Android)
+6. `$HOME/.local/share/caddy` (Linux/Unix)
+7. `./caddy` (fallback)
+
+## Platform-Specific Paths
+
+Caddy adapts storage paths to platform conventions:
+
+<Note>
+**Windows**: Uses `%AppData%` or `%USERPROFILE%`  
+**macOS**: Uses `~/Library/Application Support`  
+**Linux**: Follows XDG Base Directory Specification  
+**Plan 9**: Uses `$home/lib`  
+**Android**: Uses `/sdcard`
+</Note>
+
+## Storage Best Practices
+
+### Production Deployments
+
+1. **Use absolute paths** for clarity:
+   ```json
+   {
+     "storage": {
+       "module": "file_system",
+       "root": "/var/lib/caddy"
+     }
+   }
+   ```
+
+2. **Set appropriate permissions**:
+   ```bash
+   mkdir -p /var/lib/caddy
+   chown caddy:caddy /var/lib/caddy
+   chmod 700 /var/lib/caddy
+   ```
+
+3. **Back up regularly** - Storage contains private keys and certificates
+
+4. **Monitor disk space** - OCSP staples and certificate renewals generate data
+
+### Cluster Deployments
+
+For multiple Caddy instances:
+
+1. **Use shared storage** - Consider network file systems or database-backed storage
+2. **Enable locking** - Ensure distributed locking works correctly
+3. **Test failover** - Verify lock releases on instance failure
+
+### Security Considerations
+
+<Warning>
+**Private keys are stored in plain text** in storage. Secure your storage backend with:
+- Restrictive file permissions (0600 for files, 0700 for directories)
+- Encrypted file systems
+- Access control lists (ACLs)
+- Regular security audits
+</Warning>
+
+## Custom Storage Modules
+
+You can implement custom storage backends for:
+- Cloud storage (S3, Azure Blob, Google Cloud Storage)
+- Databases (Redis, MongoDB, PostgreSQL)
+- Distributed systems (Consul, etcd)
+- Encrypted storage
+
+### Registration
+
+Register your storage module in `init()`:
+
+```go
+import "github.com/caddyserver/caddy/v2"
+
+func init() {
+    caddy.RegisterModule(MyStorage{})
+}
+```
+
+### Implementation
+
+Implement `StorageConverter`:
+
+```go
+type MyStorage struct {
+    // Configuration fields
+}
+
+func (MyStorage) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "caddy.storage.my_storage",
+        New: func() caddy.Module { return new(MyStorage) },
+    }
+}
+
+func (s MyStorage) CertMagicStorage() (certmagic.Storage, error) {
+    // Return certmagic.Storage implementation
+    return &myStorageImpl{config: s}, nil
+}
+```
+
+## Autosave Configuration
+
+Caddy can automatically persist the last active configuration:
+
+**Default path**: `{config_dir}/autosave.json`
+
+Where `{config_dir}` is:
+- Linux: `~/.config/caddy`
+- macOS: `~/Library/Application Support/Caddy`
+- Windows: `%AppData%\Caddy`
+
+Disable autosave:
+
+```bash
+caddy run --resume false
+```
+
+## Troubleshooting
+
+### Permission Errors
+
+**Problem**: `permission denied` errors
+
+**Solution**: Ensure Caddy has read/write access:
+```bash
+sudo chown -R caddy:caddy /var/lib/caddy
+sudo chmod -R 700 /var/lib/caddy
+```
+
+### Lock Timeouts
+
+**Problem**: "could not acquire lock" errors
+
+**Solution**: 
+- Check for stale lock files in `{root}/locks/`
+- Ensure proper cleanup on Caddy shutdown
+- Verify distributed locking works in cluster setups
+
+### Disk Space Issues
+
+**Problem**: Running out of disk space
+
+**Solution**:
+- Monitor storage directory size
+- Clean up old OCSP staples
+- Implement log rotation if logging to storage
+
+## Examples
+
+### Custom Data Directory
+
+```bash
+# Set via environment
+export XDG_DATA_HOME=/opt/caddy/data
+caddy start
+```
+
+Or via configuration:
+
+```json
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/opt/caddy/data"
+  }
+}
+```
+
+### Separate PKI Storage
+
+```json
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/var/lib/caddy"
+  },
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "local": {
+          "storage": {
+            "module": "file_system",
+            "root": "/secure/caddy/pki"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Docker Volume
+
+```yaml
+version: '3'
+services:
+  caddy:
+    image: caddy:latest
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+
+volumes:
+  caddy_data:
+  caddy_config:
+```

@@ -1,0 +1,448 @@
+---
+title: Templates
+description: Execute response bodies as Go templates with rich template functions
+---
+
+The templates module is a middleware which executes response bodies as Go templates. The syntax is documented in the [Go standard library's text/template package](https://golang.org/pkg/text/template/).
+
+**Module ID:** `http.handlers.templates`
+
+<Note type="warning">
+Template functions/actions are still experimental and subject to change.
+</Note>
+
+## Configuration
+
+<ParamField path="file_root" type="string" default="{http.vars.root}">
+  The root path from which to load files. Required if template functions accessing the file system are used (such as `include`).
+  
+  Default is `{http.vars.root}` if set, or current working directory otherwise.
+</ParamField>
+
+<ParamField path="mime_types" type="array of strings" default="['text/html', 'text/plain', 'text/markdown']">
+  The MIME types for which to render templates. Important to use this if the route matchers do not exclude images or other binary files.
+</ParamField>
+
+<ParamField path="delimiters" type="array of strings" default="['{{', '}}']">
+  The template action delimiters. Must be precisely two elements: the opening and closing delimiters.
+  
+  ```json
+  "delimiters": ["[[", "]]"]  
+  ```
+</ParamField>
+
+<ParamField path="extensions" type="module map">
+  Custom template functions registered as modules. These often act as components on web pages.
+  
+  Module namespace: `http.handlers.templates.functions`
+</ParamField>
+
+## Template Context
+
+The following data and functions are available to templates:
+
+### Request Data
+
+<ResponseField name=".Args" type="slice">
+  Arguments passed to this page/context, for example as the result of an `include`.
+  
+  ```
+  {{index .Args 0}}  {{/* first argument */}}
+  ```
+</ResponseField>
+
+<ResponseField name=".Req" type="*http.Request">
+  The current HTTP request object with fields:
+  - `.Method` - The HTTP method
+  - `.URL` - The URL with component fields (Scheme, Host, Path, etc.)
+  - `.Header` - The header fields
+  - `.Host` - The Host or :authority header
+  
+  ```
+  {{.Req.Header.Get "User-Agent"}}
+  {{.Req.Method}}
+  {{.Req.URL.Path}}
+  ```
+</ResponseField>
+
+<ResponseField name=".OriginalReq" type="http.Request">
+  Like `.Req`, except it accesses the original HTTP request before rewrites or other internal modifications.
+</ResponseField>
+
+<ResponseField name=".Host" type="string">
+  Returns the hostname portion (no port) of the Host header.
+  
+  ```
+  {{.Host}}
+  ```
+</ResponseField>
+
+<ResponseField name=".RemoteIP" type="string">
+  Returns the connection's IP address.
+  
+  ```
+  {{.RemoteIP}}
+  ```
+</ResponseField>
+
+<ResponseField name=".ClientIP" type="string">
+  Returns the real client's IP address if `trusted_proxies` was configured, otherwise returns the connection's IP address.
+  
+  ```
+  {{.ClientIP}}
+  ```
+</ResponseField>
+
+### Response Manipulation
+
+<ResponseField name=".RespHeader.Add" type="function">
+  Adds a header field to the HTTP response.
+  
+  ```
+  {{.RespHeader.Add "Field-Name" "val"}}
+  ```
+</ResponseField>
+
+<ResponseField name=".RespHeader.Set" type="function">
+  Sets a header field on the HTTP response, replacing any existing value.
+  
+  ```
+  {{.RespHeader.Set "Field-Name" "val"}}
+  ```
+</ResponseField>
+
+<ResponseField name=".RespHeader.Del" type="function">
+  Deletes a header field on the HTTP response.
+  
+  ```
+  {{.RespHeader.Del "Field-Name"}}
+  ```
+</ResponseField>
+
+## Template Functions
+
+All [Sprig functions](https://masterminds.github.io/sprig/) are supported, plus Caddy-specific functions:
+
+### Placeholders and Environment
+
+<ResponseField name="env" type="function">
+  Gets an environment variable.
+  
+  ```
+  {{env "PATH"}}
+  {{env "DATABASE_URL"}}
+  ```
+</ResponseField>
+
+<ResponseField name="placeholder" type="function">
+  Gets a placeholder variable. The braces (`{}`) must be omitted.
+  
+  ```
+  {{placeholder "http.request.uri.path"}}
+  {{placeholder "http.error.status_code"}}
+  ```
+  
+  Short alias: `ph`
+  
+  ```
+  {{ph "http.request.method"}}
+  ```
+</ResponseField>
+
+### Cookies
+
+<ResponseField name=".Cookie" type="function">
+  Gets the value of a cookie by name.
+  
+  ```
+  {{.Cookie "session_id"}}
+  ```
+</ResponseField>
+
+### File Operations
+
+<ResponseField name="include" type="function">
+  Includes the contents of another file, rendering it in-place. Optionally pass key-value pairs as arguments to be accessed by the included file using `.Args`.
+  
+  <Note type="warning">
+    The contents are NOT escaped, so only include trusted template files.
+  </Note>
+  
+  ```
+  {{include "path/to/file.html"}}  {{/* no arguments */}}
+  {{include "path/to/file.html" "arg0" 1 "value 2"}}  {{/* with arguments */}}
+  ```
+</ResponseField>
+
+<ResponseField name="import" type="function">
+  Reads and returns the contents of another file, parsing it as a template and adding any template definitions to the template stack.
+  
+  If there are no definitions, the filepath will be the definition name. Any `{{ define }}` blocks will be accessible by `{{ template }}` or `{{ block }}`.
+  
+  <Note type="warning">
+    Imports must happen before the template or block action is called. The contents are NOT escaped.
+  </Note>
+  
+  ```
+  {{import "/path/to/filename.html"}}
+  {{template "main"}}
+  ```
+</ResponseField>
+
+<ResponseField name="readFile" type="function">
+  Reads and returns the contents of another file, as-is.
+  
+  <Note type="warning">
+    The contents are NOT escaped, so only read trusted files.
+  </Note>
+  
+  ```
+  {{readFile "path/to/file.html"}}
+  ```
+</ResponseField>
+
+<ResponseField name="listFiles" type="function">
+  Returns a list of files in the given directory, which is relative to the template context's file root.
+  
+  ```
+  {{range listFiles "/mydir"}}
+    {{.Name}} - {{.Size}} bytes
+  {{end}}
+  ```
+</ResponseField>
+
+<ResponseField name="fileExists" type="function">
+  Returns true if the file exists.
+  
+  ```
+  {{if fileExists "/path/to/file.txt"}}
+    File exists!
+  {{end}}
+  ```
+</ResponseField>
+
+### HTTP Includes
+
+<ResponseField name="httpInclude" type="function">
+  Includes the contents of another file by making a virtual HTTP request (sub-request). The URI path must exist on the same virtual server.
+  
+  The request is crafted in memory and the handler is invoked directly for increased efficiency.
+  
+  ```
+  {{httpInclude "/api/data?format=html"}}
+  ```
+</ResponseField>
+
+### Content Processing
+
+<ResponseField name="markdown" type="function">
+  Renders the given Markdown text as HTML using the [Goldmark](https://github.com/yuin/goldmark) library (CommonMark compliant).
+  
+  Extensions enabled:
+  - GitHub Flavored Markdown
+  - Footnote
+  - Syntax highlighting (via [Chroma](https://github.com/alecthomas/chroma))
+  
+  ```
+  {{markdown "My _markdown_ **text**"}}
+  ```
+</ResponseField>
+
+<ResponseField name="splitFrontMatter" type="function">
+  Splits front matter from the body. Front matter is metadata at the beginning of a file.
+  
+  Supported formats:
+  - **YAML**: Surrounded by `---`
+  - **TOML**: Surrounded by `+++`
+  - **JSON**: Surrounded by `{` and `}`
+  
+  Returns object with:
+  - `.Meta` - Metadata fields
+  - `.Body` - Body after front matter
+  
+  ```
+  {{$parsed := splitFrontMatter (readFile "post.md")}}
+  <h1>{{$parsed.Meta.title}}</h1>
+  {{markdown $parsed.Body}}
+  ```
+</ResponseField>
+
+<ResponseField name="stripHTML" type="function">
+  Removes HTML from a string.
+  
+  ```
+  {{stripHTML "Shows <b>only</b> text content"}}
+  {{/* Output: Shows only text content */}}
+  ```
+</ResponseField>
+
+### Formatting
+
+<ResponseField name="humanize" type="function">
+  Transforms size and time inputs to human readable format using [go-humanize](https://github.com/dustin/go-humanize).
+  
+  Format types:
+  - `size` - Turns bytes into "2.3 MB"
+  - `time` - Turns time string into "2 weeks ago"
+  
+  For `time` format, append `:layout` to specify custom time layout (default: RFC1123Z).
+  
+  ```
+  {{humanize "size" "2048000"}}
+  {{/* Output: 2.0 MB */}}
+  
+  {{placeholder "http.response.header.Content-Length" | humanize "size"}}
+  
+  {{humanize "time" "Mon, 02 Jan 2006 15:04:05 -0700"}}
+  {{/* Output: 2 weeks ago */}}
+  
+  {{humanize "time:2006-Jan-02" "2022-May-05"}}
+  ```
+</ResponseField>
+
+<ResponseField name="pathEscape" type="function">
+  Passes a string through `url.PathEscape`, replacing characters that have special meaning in URL path parameters.
+  
+  Useful for including filenames containing `?`, `&`, `%` in URL paths or as `img` src attributes.
+  
+  ```
+  {{pathEscape "50%_valid_filename?.jpg"}}
+  {{/* Output: 50%25_valid_filename%3F.jpg */}}
+  ```
+</ResponseField>
+
+### Error Handling
+
+<ResponseField name="httpError" type="function">
+  Returns an error with the given status code to the HTTP handler chain.
+  
+  ```
+  {{if not (fileExists $includedFile)}}
+    {{httpError 404}}
+  {{end}}
+  ```
+</ResponseField>
+
+### Experimental Functions
+
+<ResponseField name="maybe" type="function">
+  Invokes a custom template function only if it is registered (plugged-in) in the `http.handlers.templates.functions.*` namespace.
+  
+  If the named function is not available, the invocation is ignored and a log message is emitted.
+  
+  <Note type="warning">
+    EXPERIMENTAL: Subject to change or removal.
+  </Note>
+  
+  ```
+  {{maybe "myOptionalFunc" "arg1" 2}}
+  ```
+</ResponseField>
+
+## Configuration Examples
+
+### Basic Templates
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "templates"
+}
+```
+
+```caddyfile Caddyfile
+templates
+```
+</CodeGroup>
+
+### Custom File Root
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "templates",
+  "file_root": "/var/www/templates"
+}
+```
+
+```caddyfile Caddyfile
+templates {
+    root /var/www/templates
+}
+```
+</CodeGroup>
+
+### Custom Delimiters
+
+```json
+{
+  "handler": "templates",
+  "delimiters": ["[[", "]]"],
+  "mime_types": ["text/html"]
+}
+```
+
+### Full Stack Example
+
+```caddyfile
+example.com {
+    templates
+    file_server
+}
+```
+
+## Template Examples
+
+### Dynamic Navigation
+
+```html
+<nav>
+  {{range listFiles "/pages"}}
+    <a href="/{{.Name}}">{{.Name}}</a>
+  {{end}}
+</nav>
+```
+
+### Markdown Blog Post
+
+```html
+{{$post := readFile "/posts/my-post.md"}}
+{{$parsed := splitFrontMatter $post}}
+
+<article>
+  <h1>{{$parsed.Meta.title}}</h1>
+  <time>{{$parsed.Meta.date}}</time>
+  <div class="content">
+    {{markdown $parsed.Body}}
+  </div>
+</article>
+```
+
+### Conditional Content
+
+```html
+{{if eq .Req.Method "POST"}}
+  <p>Thanks for submitting!</p>
+{{else}}
+  <form method="POST">
+    <button type="submit">Submit</button>
+  </form>
+{{end}}
+```
+
+### Include Header/Footer
+
+```html
+{{include "header.html" .Req.URL.Path}}
+
+<main>
+  <h1>Welcome to {{.Host}}</h1>
+  <p>Your IP: {{.ClientIP}}</p>
+</main>
+
+{{include "footer.html"}}
+```
+
+<Note>
+Templates are executed after other response transformers in the handler chain. Place the `templates` handler **after** `encode` so that templates execute on uncompressed content.
+</Note>

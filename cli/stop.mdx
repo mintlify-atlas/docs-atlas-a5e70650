@@ -1,0 +1,174 @@
+---
+title: caddy stop
+description: Gracefully stop a running Caddy instance
+---
+
+The `caddy stop` command gracefully stops a running Caddy instance using the admin API.
+
+## Usage
+
+```bash
+caddy stop [flags]
+```
+
+## Description
+
+Stops the background Caddy process as gracefully as possible. It requires that the admin API is enabled and accessible, since it uses the API's `/stop` endpoint.
+
+The address of this request can be customized using the `--address` flag, or parsed from the given `--config`, or defaults to the standard admin API address.
+
+## Flags
+
+<ParamField path="--config" type="string" default="">
+  Configuration file to use to parse the admin address, if `--address` is not used.
+  
+  Caddy will load this config to determine where the admin API is listening.
+</ParamField>
+
+<ParamField path="--adapter" type="string" default="">
+  Name of config adapter to apply (when `--config` is used).
+  
+  Only needed if the config file is not in JSON format.
+</ParamField>
+
+<ParamField path="--address" type="string" default="">
+  The address to use to reach the admin API endpoint, if not the default.
+  
+  Overrides the address parsed from `--config`. Format: `host:port` or `unix/path/to/socket`
+</ParamField>
+
+## Examples
+
+### Stop with default admin address
+
+```bash
+caddy stop
+```
+
+Stops Caddy using the default admin API address (`localhost:2019`).
+
+### Stop with custom admin address
+
+```bash
+caddy stop --address localhost:2020
+```
+
+### Stop by reading config file
+
+```bash
+caddy stop --config /etc/caddy/Caddyfile
+```
+
+Caddy will parse the Caddyfile to determine the admin API address.
+
+### Stop with custom admin address in config
+
+If your Caddyfile has:
+
+```caddyfile
+{
+    admin localhost:2020
+}
+```
+
+Then run:
+
+```bash
+caddy stop --config Caddyfile --adapter caddyfile
+```
+
+### Stop using Unix socket
+
+```bash
+caddy stop --address unix//var/run/caddy.sock
+```
+
+## Exit Codes
+
+- `0` - Success (Caddy stopped gracefully)
+- `1` - Failed (could not stop Caddy)
+
+## How It Works
+
+The `caddy stop` command:
+
+1. Determines the admin API address from:
+   - The `--address` flag (highest priority)
+   - The `--config` file (parses admin config)
+   - Default address `localhost:2019`
+2. Sends a POST request to `/stop` on the admin API
+3. Waits for the response
+4. Returns success or failure
+
+## Graceful Shutdown
+
+When Caddy receives the stop command, it:
+
+1. Stops accepting new connections
+2. Waits for active connections to complete (with a timeout)
+3. Cleans up resources
+4. Exits
+
+<Note>
+The graceful shutdown timeout can be configured in the Caddy config. By default, Caddy will wait for active connections to finish.
+</Note>
+
+## Troubleshooting
+
+### Admin API not accessible
+
+If you get an error like:
+
+```
+performing request: dial tcp 127.0.0.1:2019: connect: connection refused
+```
+
+This means:
+- Caddy is not running, or
+- The admin API is disabled, or
+- The admin API is listening on a different address
+
+### Admin API disabled
+
+If you disabled the admin API in your config:
+
+```caddyfile
+{
+    admin off
+}
+```
+
+You cannot use `caddy stop`. Instead, stop Caddy by:
+- Sending a signal: `kill <pid>`
+- Using the PID file: `kill $(cat /var/run/caddy.pid)`
+- Using systemctl (if using systemd): `systemctl stop caddy`
+
+### Wrong admin address
+
+If your admin API is on a custom address, either:
+1. Use `--address` flag: `caddy stop --address localhost:2020`
+2. Use `--config` flag: `caddy stop --config /path/to/config`
+
+## Alternative Methods
+
+### Using signals
+
+```bash
+# Graceful shutdown
+kill -SIGTERM <pid>
+
+# Or using PID file
+kill $(cat /var/run/caddy.pid)
+```
+
+### Using systemd
+
+```bash
+sudo systemctl stop caddy
+```
+
+## Related Commands
+
+- [`caddy start`](/cli/start) - Start Caddy in the background
+- [`caddy run`](/cli/run) - Start Caddy in the foreground
+- [`caddy reload`](/cli/reload) - Reload the configuration without stopping

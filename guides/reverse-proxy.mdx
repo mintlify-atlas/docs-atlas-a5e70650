@@ -1,0 +1,393 @@
+---
+title: Reverse Proxy Setup
+description: Configure Caddy as a reverse proxy with load balancing, health checks, and advanced features for production environments
+---
+
+# Reverse Proxy Setup
+
+Caddy's reverse proxy is a production-grade, highly configurable module that supports load balancing, active and passive health checks, dynamic upstreams, and more.
+
+## Basic Reverse Proxy
+
+Proxy requests to a backend server:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "upstreams": [
+    {"dial": "localhost:8080"}
+  ]
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    reverse_proxy localhost:8080
+}
+```
+</CodeGroup>
+
+## Multiple Upstreams
+
+Load balance across multiple backends:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "upstreams": [
+    {"dial": "10.0.0.1:8080"},
+    {"dial": "10.0.0.2:8080"},
+    {"dial": "10.0.0.3:8080"}
+  ]
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy 10.0.0.1:8080 10.0.0.2:8080 10.0.0.3:8080
+```
+</CodeGroup>
+
+## Load Balancing Policies
+
+<Steps>
+
+### Available Policies
+
+1. **Random** (default) - Randomly select an upstream
+2. **Round Robin** - Cycle through upstreams sequentially
+3. **Least Connections** - Send to upstream with fewest active connections
+4. **IP Hash** - Consistent hashing based on client IP
+5. **Header** - Hash based on request header
+6. **Cookie** - Sticky sessions via cookie
+
+</Steps>
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "load_balancing": {
+    "selection_policy": {
+      "policy": "least_conn"
+    },
+    "retries": 3,
+    "try_duration": "10s",
+    "try_interval": "250ms"
+  },
+  "upstreams": [
+    {"dial": "10.0.0.1:8080"},
+    {"dial": "10.0.0.2:8080"}
+  ]
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy 10.0.0.1:8080 10.0.0.2:8080 {
+    lb_policy least_conn
+    lb_retries 3
+    lb_try_duration 10s
+    lb_try_interval 250ms
+}
+```
+</CodeGroup>
+
+## Health Checks
+
+### Active Health Checks
+
+Periodically check upstream health in the background:
+
+<CodeGroup>
+```json JSON
+{
+  "health_checks": {
+    "active": {
+      "uri": "/health",
+      "port": 8080,
+      "interval": "30s",
+      "timeout": "5s",
+      "passes": 2,
+      "fails": 3,
+      "expect_status": 200,
+      "expect_body": "healthy",
+      "headers": {
+        "Host": ["example.com"],
+        "User-Agent": ["Caddy-Health-Check"]
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy backend:8080 {
+    health_uri /health
+    health_port 8080
+    health_interval 30s
+    health_timeout 5s
+    health_passes 2
+    health_fails 3
+    health_status 200
+    health_body healthy
+    health_headers {
+        Host example.com
+        User-Agent Caddy-Health-Check
+    }
+}
+```
+</CodeGroup>
+
+<Note>
+  Active health checks run on a timer and require at least `uri` or `port` to be set. They do not run for dynamic upstreams.
+</Note>
+
+### Passive Health Checks
+
+Monitor proxied requests for errors:
+
+<CodeGroup>
+```json JSON
+{
+  "health_checks": {
+    "passive": {
+      "max_fails": 3,
+      "fail_duration": "30s",
+      "unhealthy_status": [500, 502, 503],
+      "unhealthy_latency": "10s",
+      "unhealthy_request_count": 10
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy backend:8080 {
+    max_fails 3
+    fail_duration 30s
+    unhealthy_status 500 502 503
+    unhealthy_latency 10s
+    unhealthy_request_count 10
+}
+```
+</CodeGroup>
+
+## Header Manipulation
+
+### Request Headers
+
+Modify headers sent to the upstream:
+
+```caddyfile
+reverse_proxy backend:8080 {
+    # Add headers
+    header_up X-Real-IP {remote_host}
+    header_up X-Custom-Header "value"
+    
+    # Remove headers
+    header_up -Authorization
+    
+    # Set Host header
+    header_up Host {upstream_hostport}
+}
+```
+
+<Tip>
+  Caddy automatically sets `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers. You usually don't need to set these manually.
+</Tip>
+
+### Response Headers
+
+Modify headers returned to clients:
+
+```caddyfile
+reverse_proxy backend:8080 {
+    # Add or modify headers
+    header_down Access-Control-Allow-Origin "*"
+    header_down Server "Caddy"
+    
+    # Remove headers
+    header_down -Server
+}
+```
+
+## Transport Configuration
+
+### HTTP Transport
+
+<CodeGroup>
+```json JSON
+{
+  "transport": {
+    "protocol": "http",
+    "dial_timeout": "10s",
+    "dial_fallback_delay": "300ms",
+    "response_header_timeout": "30s",
+    "expect_continue_timeout": "1s",
+    "keep_alive": {
+      "enabled": true,
+      "idle_conn_timeout": "90s",
+      "probe_interval": "30s"
+    },
+    "max_conns_per_host": 100,
+    "compression": false
+  }
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy backend:8080 {
+    transport http {
+        dial_timeout 10s
+        dial_fallback_delay 300ms
+        response_header_timeout 30s
+        expect_continue_timeout 1s
+        keepalive 90s
+        keepalive_interval 30s
+        max_conns_per_host 100
+        compression off
+    }
+}
+```
+</CodeGroup>
+
+### TLS Configuration
+
+Connect to upstreams over HTTPS:
+
+```caddyfile
+reverse_proxy https://backend.internal:8443 {
+    transport http {
+        tls
+        tls_server_name backend.internal
+        tls_trusted_ca_certs /path/to/ca.pem
+    }
+}
+```
+
+## Request Buffering
+
+Buffer requests/responses for slow clients or backends:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "request_buffers": 4096,
+  "response_buffers": 4096,
+  "flush_interval": "100ms"
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy backend:8080 {
+    request_buffers 4KB
+    response_buffers 4KB
+    flush_interval 100ms
+}
+```
+</CodeGroup>
+
+<Warning>
+  Request/response buffering can impact performance and memory usage. Only enable if your backend requires it.
+</Warning>
+
+## WebSocket Support
+
+Caddy automatically detects and handles WebSocket connections:
+
+```caddyfile
+reverse_proxy /ws/* backend:8080 {
+    # Optional: set timeouts for long-lived connections
+    stream_timeout 1h
+    stream_close_delay 5s
+}
+```
+
+## Handle Response
+
+Intercept and handle upstream responses:
+
+```caddyfile
+reverse_proxy backend:8080 {
+    @error status 500 502 503
+    handle_response @error {
+        respond "Service temporarily unavailable" 503
+    }
+    
+    @redirect status 3xx
+    handle_response @redirect {
+        copy_response_headers {
+            include Location
+        }
+        copy_response
+    }
+}
+```
+
+## Trusted Proxies
+
+Define which proxies to trust for `X-Forwarded-*` headers:
+
+```caddyfile
+reverse_proxy backend:8080 {
+    trusted_proxies private_ranges 10.0.0.0/8
+}
+```
+
+## Complete Example
+
+```caddyfile
+api.example.com {
+    # Load balance across multiple backends
+    reverse_proxy backend1:8080 backend2:8080 backend3:8080 {
+        # Use least connections policy
+        lb_policy least_conn
+        lb_retries 3
+        lb_try_duration 10s
+        
+        # Active health checks
+        health_uri /health
+        health_interval 30s
+        health_timeout 5s
+        health_status 200
+        
+        # Passive health checks
+        max_fails 3
+        fail_duration 30s
+        unhealthy_status 500 502 503
+        
+        # Request headers
+        header_up X-Real-IP {remote_host}
+        header_up X-Request-ID {uuid}
+        
+        # Response headers
+        header_down Server "Caddy Proxy"
+        
+        # Transport configuration
+        transport http {
+            dial_timeout 10s
+            keepalive 90s
+        }
+        
+        # Handle errors
+        @error status 500 502 503
+        handle_response @error {
+            respond "Service unavailable" 503
+        }
+    }
+}
+```
+
+## Placeholders
+
+Available placeholders during reverse proxy:
+
+- `{http.reverse_proxy.upstream.address}` - Full upstream address
+- `{http.reverse_proxy.upstream.host}` - Upstream host
+- `{http.reverse_proxy.upstream.port}` - Upstream port  
+- `{http.reverse_proxy.upstream.requests}` - Current request count
+- `{http.reverse_proxy.upstream.latency}` - Response latency
+- `{http.reverse_proxy.duration}` - Total proxy duration
+- `{http.reverse_proxy.retries}` - Number of retries performed

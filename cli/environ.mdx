@@ -1,0 +1,321 @@
+---
+title: caddy environ
+description: Print the environment as seen by the Caddy process
+---
+
+The `caddy environ` command prints the environment as seen by the Caddy process.
+
+## Usage
+
+```bash
+caddy environ [flags]
+```
+
+## Description
+
+Prints the environment as seen by this Caddy process, including:
+
+- **Caddy-specific paths** (home, data, config directories)
+- **Runtime information** (Go version, OS, architecture)
+- **All environment variables**
+
+This is useful for:
+- **Debugging** environment variable issues
+- **Verifying** Caddy can see expected variables
+- **Troubleshooting** path and configuration issues
+- **Understanding** how Caddy will behave in different environments
+
+<Warning>
+**Security**: Environments may contain sensitive data like API keys, passwords, and tokens. Be careful when sharing output from this command.
+</Warning>
+
+## Flags
+
+<ParamField path="--envfile" type="string[]" default="[]">
+  Environment file(s) to load in KEY=VALUE format before printing.
+  
+  Useful for testing how environment files will be loaded.
+</ParamField>
+
+## Examples
+
+### Print current environment
+
+```bash
+caddy environ
+```
+
+Output:
+
+```
+caddy.HomeDir=/home/user
+caddy.AppDataDir=/home/user/.local/share/caddy
+caddy.AppConfigDir=/home/user/.config/caddy
+caddy.ConfigAutosavePath=/home/user/.config/caddy/autosave.json
+caddy.Version=v2.7.6 h1:w0NymbG2m9PcvKWsrXO6EEkY9Ru4FJK8uQbYcev1p3A=
+runtime.GOOS=linux
+runtime.GOARCH=amd64
+runtime.Compiler=gc
+runtime.NumCPU=8
+runtime.GOMAXPROCS=8
+runtime.Version=go1.21.5
+os.Getwd=/home/user/myapp
+
+PATH=/usr/local/bin:/usr/bin:/bin
+HOME=/home/user
+USER=user
+SHELL=/bin/bash
+LANG=en_US.UTF-8
+...
+```
+
+### Test environment file loading
+
+```bash
+caddy environ --envfile .env
+```
+
+This loads `.env` before printing, so you can verify the variables are set correctly.
+
+### Test multiple environment files
+
+```bash
+caddy environ --envfile .env --envfile .env.local
+```
+
+Later files override earlier ones.
+
+### Save environment to file
+
+```bash
+caddy environ > caddy-env.txt
+```
+
+### Compare environments
+
+Compare development vs production:
+
+```bash
+# On dev machine
+caddy environ > env-dev.txt
+
+# On production server
+ssh prod 'caddy environ' > env-prod.txt
+
+# Compare
+diff env-dev.txt env-prod.txt
+```
+
+### Check specific variable
+
+```bash
+caddy environ | grep API_KEY
+```
+
+## Output Format
+
+The output has two sections:
+
+### 1. Caddy Information
+
+Caddy-specific paths and runtime info:
+
+```
+caddy.HomeDir=/home/user
+caddy.AppDataDir=/home/user/.local/share/caddy
+caddy.AppConfigDir=/home/user/.config/caddy
+caddy.ConfigAutosavePath=/home/user/.config/caddy/autosave.json
+caddy.Version=v2.7.6 h1:...
+runtime.GOOS=linux
+runtime.GOARCH=amd64
+runtime.Compiler=gc
+runtime.NumCPU=8
+runtime.GOMAXPROCS=8
+runtime.Version=go1.21.5
+os.Getwd=/current/working/directory
+```
+
+### 2. Environment Variables
+
+All environment variables in `KEY=VALUE` format:
+
+```
+PATH=/usr/local/bin:/usr/bin:/bin
+HOME=/home/user
+USER=user
+LANG=en_US.UTF-8
+MY_API_KEY=secret123
+...
+```
+
+## Caddy Path Variables
+
+<ParamField path="caddy.HomeDir" type="string">
+  User's home directory.
+  
+  On Unix: `$HOME`  
+  On Windows: `%USERPROFILE%`
+</ParamField>
+
+<ParamField path="caddy.AppDataDir" type="string">
+  Directory where Caddy stores data (TLS certificates, ACME accounts, etc.).
+  
+  Default:
+  - Linux: `$HOME/.local/share/caddy`
+  - macOS: `$HOME/Library/Application Support/Caddy`
+  - Windows: `%APPDATA%/Caddy`
+  
+  Can be overridden with `$XDG_DATA_HOME/caddy`
+</ParamField>
+
+<ParamField path="caddy.AppConfigDir" type="string">
+  Directory where Caddy stores configuration.
+  
+  Default:
+  - Linux: `$HOME/.config/caddy`
+  - macOS: `$HOME/Library/Application Support/Caddy`
+  - Windows: `%APPDATA%/Caddy`
+  
+  Can be overridden with `$XDG_CONFIG_HOME/caddy`
+</ParamField>
+
+<ParamField path="caddy.ConfigAutosavePath" type="string">
+  Path where Caddy saves the last running config for `--resume`.
+  
+  Usually `{caddy.AppConfigDir}/autosave.json`
+</ParamField>
+
+## Environment Variables in Config
+
+If your Caddyfile uses environment variables:
+
+```caddyfile
+{$SITE_ADDRESS} {
+    reverse_proxy {env.BACKEND_HOST}:{env.BACKEND_PORT}
+    
+    tls {env.TLS_EMAIL}
+}
+```
+
+You can verify they're set:
+
+```bash
+caddy environ | grep -E '(SITE_ADDRESS|BACKEND_HOST|BACKEND_PORT|TLS_EMAIL)'
+```
+
+## Common Use Cases
+
+### 1. Debug missing variables
+
+```bash
+# Check if variable is set
+caddy environ | grep MY_VARIABLE
+
+# If not found, variable is not set
+```
+
+### 2. Verify service manager environment
+
+Environments differ between shells and service managers:
+
+```bash
+# In shell
+caddy environ > env-shell.txt
+
+# Via systemd
+systemctl cat caddy  # Check EnvironmentFile
+sudo systemctl show caddy --property=Environment
+```
+
+### 3. Test environment files
+
+```bash
+# See what .env adds
+caddy environ --envfile .env | grep -v '^caddy\|^runtime\|^os'
+```
+
+### 4. CI/CD debugging
+
+In GitHub Actions or other CI:
+
+```yaml
+- name: Debug Caddy environment
+  run: caddy environ
+```
+
+### 5. Container debugging
+
+```bash
+# In Docker
+docker exec caddy-container caddy environ
+
+# Or in docker-compose
+docker-compose exec caddy caddy environ
+```
+
+## Platform Differences
+
+### Linux
+
+Respects XDG Base Directory specification:
+
+- `$XDG_DATA_HOME` - Data directory
+- `$XDG_CONFIG_HOME` - Config directory
+- `$XDG_CACHE_HOME` - Cache directory
+
+If not set, falls back to `$HOME/.local/share`, `$HOME/.config`, etc.
+
+### macOS
+
+Uses standard macOS paths:
+
+- `~/Library/Application Support/Caddy`
+
+### Windows
+
+Uses Windows environment variables:
+
+- `%APPDATA%\Caddy`
+- `%USERPROFILE%`
+
+### Plan 9
+
+Uses `$home` instead of `$HOME`.
+
+## Security Considerations
+
+<Warning>
+The output includes **ALL** environment variables, which may contain:
+- API keys and tokens
+- Database passwords
+- Private keys
+- Session secrets
+
+**Never share the output publicly** without redacting sensitive data.
+</Warning>
+
+To redact sensitive data:
+
+```bash
+# Remove specific variables
+caddy environ | grep -v -E '(PASSWORD|SECRET|KEY|TOKEN)'
+
+# Or manually redact
+caddy environ | sed 's/PASSWORD=.*/PASSWORD=<redacted>/'
+```
+
+## Alternative: Print environment when running
+
+You can also print the environment when starting Caddy:
+
+```bash
+caddy run --environ
+```
+
+This prints the environment and then continues to run Caddy (unlike `caddy environ` which exits).
+
+## Related Commands
+
+- [`caddy run`](/cli/run) - Start Caddy (with `--environ` flag)
+- [`caddy adapt`](/cli/adapt) - Test config with environment variables
+- [`caddy validate`](/cli/validate) - Validate config with environment variables

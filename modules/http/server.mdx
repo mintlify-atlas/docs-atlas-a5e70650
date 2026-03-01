@@ -1,0 +1,249 @@
+---
+title: HTTP Server
+description: Core HTTP server module configuration and options
+---
+
+The HTTP Server module is the foundation of Caddy's HTTP functionality. It describes the configuration for individual HTTP servers, including listeners, protocols, routing, TLS settings, and various server-level behaviors.
+
+## Module ID
+
+`http.servers.<name>`
+
+Each server is defined by a unique name in the configuration.
+
+## Server Configuration
+
+### Listen Addresses
+
+<ParamField path="listen" type="array of strings">
+  Socket addresses to bind listeners to. Accepts network addresses that may include port ranges. Listener addresses must be unique across all defined servers.
+
+  ```json
+  "listen": [":443", ":80"]
+  ```
+</ParamField>
+
+### Protocol Settings
+
+<ParamField path="protocols" type="array of strings" default="[h1, h2, h3]">
+  Specifies which HTTP protocols to enable. Supported values:
+  
+  - `h1` - HTTP/1.1
+  - `h2` - HTTP/2 over TLS
+  - `h2c` - Cleartext HTTP/2
+  - `h3` - HTTP/3 over QUIC
+  
+  <Note>
+    If enabling `h2` or `h2c`, `h1` must also be enabled due to Go standard library limitations.
+  </Note>
+  
+  HTTP/2 operates only over TLS (HTTPS). HTTP/3 opens a UDP socket to serve QUIC connections.
+</ParamField>
+
+<ParamField path="listen_protocols" type="array of arrays">
+  Overrides `protocols` for each parallel address in `listen`. A nil value or element indicates that `protocols` will be used instead.
+</ParamField>
+
+### Timeouts
+
+<ParamField path="read_timeout" type="duration">
+  How long to allow a read from a client's upload. Setting this to a short, non-zero value can mitigate slowloris attacks, but may affect legitimately slow clients.
+</ParamField>
+
+<ParamField path="read_header_timeout" type="duration" default="1 minute">
+  Like `read_timeout` but specifically for request headers.
+</ParamField>
+
+<ParamField path="write_timeout" type="duration">
+  How long to allow a write to a client. Setting this to a small value when serving large files may negatively affect legitimately slow clients.
+</ParamField>
+
+<ParamField path="idle_timeout" type="duration" default="5 minutes">
+  Maximum time to wait for the next request when keep-alives are enabled. If zero, a default timeout of 5m is applied to help avoid resource exhaustion.
+</ParamField>
+
+### TCP Keep-Alive
+
+<ParamField path="keepalive_interval" type="duration" default="15 seconds">
+  Interval at which TCP keepalive packets are sent to keep the connection alive at the TCP layer when no other data is being transmitted. If negative, keepalive packets are not sent.
+</ParamField>
+
+<ParamField path="keepalive_idle" type="duration" default="15 seconds">
+  Time that the connection must be idle before the first TCP keep-alive probe is sent when no other data is being transmitted. If negative, underlying socket value is unchanged.
+</ParamField>
+
+<ParamField path="keepalive_count" type="integer" default="9">
+  Maximum number of TCP keep-alive probes that should be sent before dropping a connection. If negative, underlying socket value is unchanged.
+</ParamField>
+
+### Request Limits
+
+<ParamField path="max_header_bytes" type="integer">
+  Maximum size to parse from a client's HTTP request headers.
+</ParamField>
+
+<ParamField path="enable_full_duplex" type="boolean" default="false">
+  Enable full-duplex communication for HTTP/1 requests. Only has an effect if Caddy was built with Go 1.21 or later.
+  
+  <Note type="warning">
+    This is an EXPERIMENTAL feature and subject to change. Test thoroughly with your HTTP clients, as some older clients may not support full-duplex HTTP/1 which can cause them to deadlock.
+  </Note>
+</ParamField>
+
+## Routes and Handlers
+
+<ParamField path="routes" type="array">
+  Describes how this server will handle requests. Routes are executed sequentially. Each route's matchers are evaluated first, then its grouping. If it matches and has not been mutually-excluded by its grouping, its handlers are executed sequentially.
+  
+  By default, all unrouted requests receive a 200 OK response to indicate the server is working.
+</ParamField>
+
+<ParamField path="named_routes" type="object">
+  Mapping of reusable routes that can be invoked by their name. This optimizes memory usage when the same route is needed for many subroutes, by having handlers and matchers provisioned once but used from many places.
+  
+  <Note type="warning">
+    EXPERIMENTAL: Subject to change or removal.
+  </Note>
+</ParamField>
+
+<ParamField path="errors" type="object">
+  How this server will handle errors returned from any of the handlers in the primary routes. If the primary handler chain returns an error, the error along with its recommended status code are bubbled back to the HTTP server which executes a separate error route.
+</ParamField>
+
+## TLS Configuration
+
+<ParamField path="tls_connection_policies" type="array">
+  How to handle TLS connections. At least one policy is required to enable HTTPS on this server if automatic HTTPS is disabled or does not apply.
+</ParamField>
+
+<ParamField path="automatic_https" type="object">
+  Configures or disables automatic HTTPS within this server. HTTPS is enabled automatically and by default when qualifying names are present in a Host matcher and/or when the server is listening only on the HTTPS port.
+</ParamField>
+
+<ParamField path="strict_sni_host" type="boolean">
+  If true, requires that a request's Host header match the value of the ServerName sent by the client's TLS ClientHello. Often a necessary safeguard when using TLS client authentication.
+</ParamField>
+
+## Trusted Proxies
+
+<ParamField path="trusted_proxies" type="module">
+  A module which provides a source of IP ranges from which requests should be trusted. By default, no proxies are trusted.
+  
+  This can be used as a default set of ranges for handlers or matchers in routes to pick up, instead of needing to configure each of them. For example, the `reverse_proxy` handler uses this to trust sensitive incoming `X-Forwarded-*` headers.
+  
+  Module namespace: `http.ip_sources`
+</ParamField>
+
+<ParamField path="client_ip_headers" type="array of strings" default="['X-Forwarded-For']">
+  Headers from which the client IP address could be read from. These will be considered in order, with the first good value being used as the client IP.
+  
+  This depends on `trusted_proxies` being configured and the request being validated as coming from a trusted proxy.
+</ParamField>
+
+<ParamField path="trusted_proxies_strict" type="integer" default="0">
+  If greater than zero, enables strict ClientIPHeaders parsing. The headers will be parsed from right to left, and the first value that is both valid and doesn't match the trusted proxy list will be used as client IP.
+  
+  If zero, the headers will be parsed from left to right, and the first value that is a valid IP address will be used.
+</ParamField>
+
+<ParamField path="trusted_proxies_unix" type="boolean" default="false">
+  If true, enables trusting socket connections (e.g. Unix domain sockets) as coming from a trusted proxy.
+</ParamField>
+
+## Logging
+
+<ParamField path="logs" type="object">
+  Enables access logging and configures how access logs are handled in this server. To minimally enable access logs, simply set this to a non-null, empty struct.
+</ParamField>
+
+## Advanced Settings
+
+<ParamField path="listener_wrappers" type="array">
+  List of listener wrapper modules, which can modify the behavior of the base listener. They are applied in the given order.
+  
+  Module namespace: `caddy.listeners`
+</ParamField>
+
+<ParamField path="packet_conn_wrappers" type="array">
+  List of packet conn wrapper modules, which can modify the behavior of the base packet conn. They are applied in the given order.
+  
+  Module namespace: `caddy.packetconns`
+</ParamField>
+
+<ParamField path="allow_0rtt" type="boolean">
+  If set, overrides whether QUIC listeners allow 0-RTT (early data). If nil, the default behavior is used (currently allowed).
+  
+  <Note>
+    One reason to disable 0-RTT is if a remote IP matcher is used, which introduces a dependency on the remote address being verified if routing happens before the TLS handshake completes.
+  </Note>
+</ParamField>
+
+## Configuration Example
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "example": {
+          "listen": [":443"],
+          "protocols": ["h1", "h2", "h3"],
+          "routes": [
+            {
+              "match": [{"host": ["example.com"]}],
+              "handle": [{"handler": "file_server"}]
+            }
+          ],
+          "idle_timeout": "5m",
+          "read_header_timeout": "30s"
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    file_server
+}
+```
+</CodeGroup>
+
+## Context Values
+
+The server sets the following context values on requests:
+
+- `ServerCtxKey` - Reference to the server instance
+- `VarsCtxKey` - Request's variable table
+- `OriginalRequestCtxKey` - Partial copy of the unmodified request
+
+## Methods
+
+### ServeHTTP
+
+The entry point for all HTTP requests. This method:
+
+1. Enables full-duplex for HTTP/1 if configured
+2. Sets the Server header
+3. Advertises HTTP/3 if enabled
+4. Prepares the request with a replacer and context
+5. Handles ACME HTTP challenges
+6. Executes the primary handler chain
+7. Invokes error handler chain if needed
+
+### PrepareRequest
+
+Fills the request for use in a Caddy HTTP handler chain. Sets up:
+
+- Replacer context
+- Server reference
+- Trusted proxy detection
+- Client IP determination
+- Request variables
+- Original request copy
+
+<Note>
+The server enforces strict host matching when `strict_sni_host` is enabled, ensuring the TLS ServerName matches the Host header.
+</Note>

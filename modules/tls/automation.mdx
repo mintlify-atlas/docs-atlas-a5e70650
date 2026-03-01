@@ -1,0 +1,330 @@
+---
+title: TLS Automation
+description: Automatic certificate management with ACME, internal CA, and on-demand TLS
+---
+
+Caddy's TLS automation handles certificate lifecycle management including obtaining, renewing, and revoking certificates automatically.
+
+## AutomationConfig
+
+The top-level automation configuration controls certificate management policies and intervals.
+
+<ParamField path="policies" type="array">
+  List of automation policies. The first policy matching a certificate or subject name will be applied.
+  
+  Each policy can specify which subjects it applies to and which issuers to use for certificate management.
+</ParamField>
+
+<ParamField path="on_demand" type="object">
+  On-Demand TLS configuration. Defers certificate operations to the moment they are needed (during TLS handshake).
+  
+  <Note>Caddy was the first web server to implement this experimental technology in 2015.</Note>
+  
+  <Warning>
+    This field only configures on-demand TLS, it does not enable it. To enable, create an automation policy with `on_demand: true`.
+  </Warning>
+</ParamField>
+
+<ParamField path="ocsp_interval" type="duration" default="1h">
+  How often to scan OCSP responses for freshness and update them if getting stale.
+  
+  Caddy staples OCSP and caches the response for all qualifying certificates by default.
+</ParamField>
+
+<ParamField path="renew_interval" type="duration" default="10m">
+  How frequently to scan all loaded, managed certificates for expiration.
+</ParamField>
+
+<ParamField path="storage_clean_interval" type="duration" default="24h">
+  How often to scan storage units for old or expired assets and remove them.
+  
+  <Info>
+    These scans exert lots of reads and list operations on storage. Choose a longer interval for large deployments.
+  </Info>
+  
+  Storage is always cleaned when the process first starts. A new cleaning starts this duration after the previous one started, but only if the previous cleaning finished in less than half this interval.
+</ParamField>
+
+## Automation Policy
+
+An automation policy designates how to automate the management (obtaining, renewal, and revocation) of TLS certificates.
+
+### Policy Configuration
+
+<ParamField path="subjects" type="array of strings">
+  Which subjects (hostnames or IP addresses) this policy applies to.
+  
+  <Note>
+    This is a filter, not a command. It's used only to determine whether this policy should apply to a subject that needs a certificate. To have Caddy automate certificates for specific subjects, use the "automate" certificate loader module.
+  </Note>
+</ParamField>
+
+<ParamField path="issuers" type="array">
+  Modules that may issue certificates.
+  
+  **Default:** `internal` if all subjects do not qualify for public certificates; otherwise `acme` and `zerossl`.
+  
+  Available issuers:
+  - `acme` - ACME protocol (Let's Encrypt, ZeroSSL, etc.)
+  - `zerossl` - ZeroSSL API (distinct from ACME)
+  - `internal` - Internal CA using PKI app
+</ParamField>
+
+<ParamField path="get_certificate" type="array">
+  Modules that can get a custom certificate for any given TLS handshake at handshake-time.
+  
+  <Warning>EXPERIMENTAL: Subject to change or removal.</Warning>
+  
+  Enables on-demand TLS as a side-effect. Useful when another entity is managing certificates and Caddy only needs to retrieve and serve them.
+</ParamField>
+
+<ParamField path="must_staple" type="boolean" default="false">
+  If true, certificates will be requested with MustStaple.
+  
+  <Warning>
+    Not all CAs support this. There are potentially serious consequences of enabling this without proper threat modeling.
+  </Warning>
+</ParamField>
+
+<ParamField path="renewal_window_ratio" type="number" default="0.33">
+  How long before expiration to try renewing a certificate, as a function of its total lifetime.
+  
+  <Info>
+    As a conservative rule, it's good to renew when about 1/3 of lifetime remains. This uses the majority of the certificate's lifetime while saving time to troubleshoot. For extremely short-lived certs, you may want to increase to ~0.5.
+  </Info>
+</ParamField>
+
+<ParamField path="key_type" type="string">
+  The type of key to generate for certificates.
+  
+  **Supported values:**
+  - `ed25519`
+  - `p256`
+  - `p384`
+  - `rsa2048`
+  - `rsa4096`
+</ParamField>
+
+<ParamField path="storage" type="object">
+  Optionally configure a separate storage module associated with this policy, instead of using Caddy's global/default-configured storage.
+</ParamField>
+
+<ParamField path="on_demand" type="boolean" default="false">
+  If true, certificates will be managed "on demand" - during TLS handshakes or when needed, rather than at startup or config load.
+  
+  This enables On-Demand TLS for this policy.
+</ParamField>
+
+<ParamField path="reuse_private_keys" type="boolean" default="false">
+  If true, private keys already existing in storage will be reused.
+  
+  <Warning>
+    TEMPORARY: Key pinning is against industry best practices. This property will likely be removed in the future. Do not rely on it; watch the release notes.
+  </Warning>
+  
+  Otherwise, a new key will be created for every new certificate to mitigate pinning and reduce the scope of key compromise.
+</ParamField>
+
+<ParamField path="disable_ocsp_stapling" type="boolean" default="false">
+  Disables OCSP stapling.
+  
+  <Warning>
+    Disabling OCSP stapling puts clients at greater risk, reduces their privacy, and usually lowers client performance. NOT recommended unless you can justify the costs.
+  </Warning>
+  
+  <Info>EXPERIMENTAL: Subject to change.</Info>
+</ParamField>
+
+<ParamField path="ocsp_overrides" type="object">
+  Overrides the URLs of OCSP responders embedded in certificates.
+  
+  Each key is an OCSP server URL to override, and its value is the replacement. An empty value disables querying of that server.
+  
+  <Info>EXPERIMENTAL: Subject to change.</Info>
+</ParamField>
+
+## Configuration Examples
+
+### Basic Automation Policy
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["example.com", "*.example.com"],
+            "issuers": [
+              {
+                "module": "acme",
+                "email": "admin@example.com"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### On-Demand TLS with Permission Module
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "on_demand": true
+          }
+        ],
+        "on_demand": {
+          "permission": {
+            "module": "http",
+            "endpoint": "https://api.example.com/check-domain"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Custom Renewal and Storage Settings
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "ocsp_interval": "2h",
+        "renew_interval": "5m",
+        "storage_clean_interval": "48h",
+        "policies": [
+          {
+            "subjects": ["example.com"],
+            "renewal_window_ratio": 0.5,
+            "key_type": "p256"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Internal CA for Development
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["localhost", "*.local"],
+            "issuers": [
+              {
+                "module": "internal",
+                "ca": "local",
+                "lifetime": "24h"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+## Default Issuers
+
+When no issuers are explicitly configured, Caddy uses sensible defaults:
+
+1. **For public certificates** (domains qualifying for public trust):
+   - ACME issuer (Let's Encrypt)
+   - ZeroSSL ACME issuer (if email is provided)
+
+2. **For internal certificates** (localhost, .local, IP addresses):
+   - Internal issuer using Caddy's PKI app
+
+## On-Demand TLS
+
+On-Demand TLS allows Caddy to obtain certificates during the TLS handshake, when the certificate is first needed.
+
+<Warning>
+  On-demand TLS requires a permission module to prevent abuse. Without it, your server may be vulnerable to attackers who could exhaust rate limits or storage.
+</Warning>
+
+### Permission Module
+
+The permission module (typically `http`) makes a request to your application to determine if a certificate should be allowed:
+
+<ParamField path="endpoint" type="string" required>
+  Full URL to the permission endpoint. A query parameter `?domain=example.com` will be added.
+  
+  The endpoint must return HTTP 200 OK to allow the certificate; anything else denies it. Redirects are not followed.
+</ParamField>
+
+### Example Permission Endpoint
+
+```javascript
+// Express.js example
+app.get('/check-domain', (req, res) => {
+  const domain = req.query.domain;
+  
+  // Check if domain is allowed in your database
+  if (isAllowedDomain(domain)) {
+    res.status(200).send('OK');
+  } else {
+    res.status(403).send('Forbidden');
+  }
+});
+```
+
+## Caddyfile Configuration
+
+```caddyfile
+{
+  email admin@example.com
+  
+  # Custom automation policy
+  cert_issuer acme {
+    dir https://acme-v02.api.letsencrypt.org/directory
+    email admin@example.com
+  }
+  
+  # On-demand TLS
+  on_demand_tls {
+    ask https://api.example.com/check-domain
+  }
+  
+  # Renewal settings
+  renew_interval 5m
+  ocsp_interval 1h
+}
+
+example.com {
+  tls {
+    on_demand
+  }
+}
+```
+
+## Best Practices
+
+<Info>
+  **Renewal Window:** The default 1/3 lifetime ratio means a 90-day Let's Encrypt certificate renews around 30 days before expiration, leaving ample time for troubleshooting.
+</Info>
+
+<Warning>
+  **On-Demand Security:** Always use a permission module with on-demand TLS. Publicly accessible "ask" endpoints should be avoided to prevent information leaks.
+</Warning>
+
+<Note>
+  **Key Types:** Ed25519 offers the best performance and security for most use cases. RSA keys are larger and slower but may be required for compatibility with older clients.
+</Note>

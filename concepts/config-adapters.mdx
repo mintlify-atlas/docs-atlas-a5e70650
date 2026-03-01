@@ -1,0 +1,496 @@
+---
+title: "Config Adapters"
+description: "How config adapters transform various configuration formats into Caddy JSON"
+---
+
+Config adapters are modules that convert non-JSON configuration formats into Caddy's native JSON structure. This allows you to write configurations in more user-friendly formats like Caddyfile while benefiting from Caddy's JSON-based architecture.
+
+## What is a Config Adapter?
+
+A config adapter implements a simple interface:
+
+```go configadapters.go:24-28
+type Adapter interface {
+    Adapt(body []byte, options map[string]any) ([]byte, []Warning, error)
+}
+```
+
+The adapter:
+1. Receives raw configuration bytes (e.g., Caddyfile text)
+2. Parses and validates the input
+3. Transforms it into Caddy JSON
+4. Returns the JSON, any warnings, and potential errors
+
+## Built-in Adapters
+
+Caddy ships with the Caddyfile adapter, which is the most popular format:
+
+```go httptype.go:38-40
+func init() {
+    caddyconfig.RegisterAdapter("caddyfile", caddyfile.Adapter{ServerType: ServerType{}})
+}
+```
+
+<Note>
+The Caddyfile adapter is actually a family of adapters with different "server types". The HTTP server type is the most common.
+</Note>
+
+## How Adapters Work
+
+<Steps>
+  <Step title="Input Parsing">
+    The adapter parses the input format into an internal representation.
+    
+    For Caddyfile, this involves:
+    - Lexical analysis (tokenization)
+    - Syntax parsing (server blocks, directives)
+    - Placeholder replacement
+    - Import resolution
+  </Step>
+
+  <Step title="Validation">
+    The adapter validates the parsed configuration:
+    
+    ```go configadapters.go:30-36
+    type Warning struct {
+        File      string `json:"file,omitempty"`
+        Line      int    `json:"line,omitempty"`
+        Directive string `json:"directive,omitempty"`
+        Message   string `json:"message,omitempty"`
+    }
+    ```
+    
+    Warnings are collected but don't stop the adaptation process.
+  </Step>
+
+  <Step title="Transformation">
+    The adapter transforms the configuration into Caddy's JSON structure.
+    
+    Helper functions simplify JSON generation:
+    
+    ```go configadapters.go:46-60
+    // JSON encodes val as JSON, returning it as a json.RawMessage.
+    // Any marshaling errors are converted to warnings.
+    func JSON(val any, warnings *[]Warning) json.RawMessage {
+        b, err := json.Marshal(val)
+        if err != nil {
+            if warnings != nil {
+                *warnings = append(*warnings, Warning{Message: err.Error()})
+            }
+            return nil
+        }
+        return b
+    }
+    ```
+  </Step>
+
+  <Step title="Module Object Creation">
+    For module values, adapters use special helpers:
+    
+    ```go configadapters.go:62-106
+    // JSONModuleObject marshals val into a JSON object with an added
+    // key named fieldName with the value fieldVal.
+    func JSONModuleObject(val any, fieldName, fieldVal string, warnings *[]Warning) json.RawMessage {
+        // Encode to JSON object first
+        enc, err := json.Marshal(val)
+        if err != nil {
+            if warnings != nil {
+                *warnings = append(*warnings, Warning{Message: err.Error()})
+            }
+            return nil
+        }
+
+        // Decode the object
+        var tmp map[string]any
+        err = json.Unmarshal(enc, &tmp)
+        if err != nil {
+            // ... error handling ...
+            return nil
+        }
+
+        // Add the module's field with its appointed value
+        tmp[fieldName] = fieldVal
+
+        // Re-marshal as JSON
+        result, err := json.Marshal(tmp)
+        // ... return result ...
+    }
+    ```
+    
+    This allows the adapter to specify module names inline with configuration.
+  </Step>
+</Steps>
+
+## Registering Adapters
+
+Adapters must be registered before they can be used:
+
+```go configadapters.go:108-117
+func RegisterAdapter(name string, adapter Adapter) {
+    if _, ok := configAdapters[name]; ok {
+        panic(fmt.Errorf("%s: already registered", name))
+    }
+    configAdapters[name] = adapter
+    caddy.RegisterModule(adapterModule{name, adapter})
+}
+```
+
+<Info>
+Adapters are also registered as Caddy modules in the `caddy.adapters` namespace. This ensures they appear in module listings.
+</Info>
+
+### Adapter Module Wrapper
+
+```go configadapters.go:125-140
+type adapterModule struct {
+    name string
+    Adapter
+}
+
+func (am adapterModule) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  caddy.ModuleID("caddy.adapters." + am.name),
+        New: func() caddy.Module { return am },
+    }
+}
+```
+
+## Using Adapters
+
+### CLI Usage
+
+You can specify an adapter when loading a config:
+
+```bash
+caddy run --config Caddyfile --adapter caddyfile
+```
+
+Or convert a config to JSON:
+
+```bash
+caddy adapt --config Caddyfile --adapter caddyfile
+```
+
+### API Usage
+
+Adapters can be retrieved programmatically:
+
+```go configadapters.go:119-123
+func GetAdapter(name string) Adapter {
+    return configAdapters[name]
+}
+```
+
+Example usage:
+
+```go
+adapter := caddyconfig.GetAdapter("caddyfile")
+if adapter == nil {
+    return fmt.Errorf("adapter not found")
+}
+
+caddyJSON, warnings, err := adapter.Adapt(caddyfileBytes, nil)
+if err != nil {
+    return fmt.Errorf("adaptation failed: %w", err)
+}
+
+for _, warn := range warnings {
+    log.Printf("Warning: %s", warn)
+}
+```
+
+## Caddyfile Adapter Deep Dive
+
+The Caddyfile adapter is the most sophisticated adapter. Let's explore how it works:
+
+### Server Blocks
+
+Caddyfile configurations are organized into server blocks:
+
+```caddyfile
+example.com {
+    root * /var/www/html
+    file_server
+}
+```
+
+The adapter processes these through several phases:
+
+<Accordion title="Phase 1: Parsing">
+Server blocks are parsed into an internal structure:
+
+```go httptype.go:66-80
+originalServerBlocks := make([]serverBlock, 0, len(inputServerBlocks))
+for _, sblock := range inputServerBlocks {
+    for j, k := range sblock.Keys {
+        if j == 0 && strings.HasPrefix(k.Text, "@") {
+            return nil, warnings, fmt.Errorf("%s:%d: cannot define a matcher outside of a site block", k.File, k.Line)
+        }
+        if _, ok := registeredDirectives[k.Text]; ok {
+            return nil, warnings, fmt.Errorf("%s:%d: parsed '%s' as a site address, but it is a known directive", k.File, k.Line, k.Text)
+        }
+    }
+    originalServerBlocks = append(originalServerBlocks, serverBlock{
+        block: sblock,
+        pile:  make(map[string][]ConfigValue),
+    })
+}
+```
+</Accordion>
+
+<Accordion title="Phase 2: Directive Processing">
+Each directive is processed by its registered handler:
+
+```go httptype.go:120-159
+for _, segment := range sb.block.Segments {
+    dir := segment.Directive()
+
+    if strings.HasPrefix(dir, matcherPrefix) {
+        // matcher definitions were pre-processed
+        continue
+    }
+
+    dirFunc, ok := registeredDirectives[dir]
+    if !ok {
+        tkn := segment[0]
+        message := "%s:%d: unrecognized directive: %s"
+        if !sb.block.HasBraces {
+            message += "\nDid you mean to define a second site? If so, you must use curly braces around each site to separate their configurations."
+        }
+        return nil, warnings, fmt.Errorf(message, tkn.File, tkn.Line, dir)
+    }
+
+    h := Helper{
+        Dispenser:    caddyfile.NewDispenser(segment),
+        options:      options,
+        warnings:     &warnings,
+        matcherDefs:  matcherDefs,
+        parentBlock:  sb.block,
+        groupCounter: gc,
+        State:        state,
+    }
+
+    results, err := dirFunc(h)
+    if err != nil {
+        return nil, warnings, fmt.Errorf("parsing caddyfile tokens for '%s': %v", dir, err)
+    }
+
+    dir = normalizeDirectiveName(dir)
+
+    for _, result := range results {
+        result.directive = dir
+        sb.pile[result.Class] = append(sb.pile[result.Class], result)
+    }
+}
+```
+</Accordion>
+
+<Accordion title="Phase 3: Server Construction">
+Server blocks are consolidated and HTTP servers are created:
+
+```go httptype.go:174-188
+// Map server blocks to addresses
+sbmap, err := st.mapAddressToProtocolToServerBlocks(originalServerBlocks, options)
+if err != nil {
+    return nil, warnings, err
+}
+
+// Consolidate address mappings
+pairings := st.consolidateAddrMappings(sbmap)
+
+// Create servers from pairings
+servers, err := st.serversFromPairings(pairings, options, &warnings, gc)
+if err != nil {
+    return nil, warnings, err
+}
+```
+</Accordion>
+
+### Directive Registration
+
+Directives must be registered to be recognized:
+
+```go
+func init() {
+    RegisterDirective("my_directive", parseMyDirective)
+}
+
+func parseMyDirective(h Helper) ([]ConfigValue, error) {
+    // Parse the directive
+    // Return config values
+}
+```
+
+## Creating Custom Adapters
+
+Here's how to create a simple YAML adapter:
+
+<Steps>
+  <Step title="Define the Adapter">
+    ```go
+    package yamladapter
+
+    import (
+        "encoding/json"
+        "gopkg.in/yaml.v3"
+        "github.com/caddyserver/caddy/v2/caddyconfig"
+    )
+
+    func init() {
+        caddyconfig.RegisterAdapter("yaml", YAMLAdapter{})
+    }
+
+    type YAMLAdapter struct{}
+    ```
+  </Step>
+
+  <Step title="Implement the Adapt Method">
+    ```go
+    func (YAMLAdapter) Adapt(body []byte, options map[string]any) ([]byte, []caddyconfig.Warning, error) {
+        var warnings []caddyconfig.Warning
+        
+        // Parse YAML into generic structure
+        var yamlConfig any
+        if err := yaml.Unmarshal(body, &yamlConfig); err != nil {
+            return nil, warnings, fmt.Errorf("parsing YAML: %w", err)
+        }
+        
+        // Transform to Caddy config structure
+        caddyConfig := transformToCaddyConfig(yamlConfig, &warnings)
+        
+        // Marshal to JSON
+        result, err := json.Marshal(caddyConfig)
+        if err != nil {
+            return nil, warnings, fmt.Errorf("encoding JSON: %w", err)
+        }
+        
+        return result, warnings, nil
+    }
+    ```
+  </Step>
+
+  <Step title="Add Transformation Logic">
+    ```go
+    func transformToCaddyConfig(input any, warnings *[]caddyconfig.Warning) map[string]any {
+        config := make(map[string]any)
+        
+        // Your transformation logic here
+        // Convert YAML structure to Caddy JSON structure
+        
+        return config
+    }
+    ```
+  </Step>
+</Steps>
+
+## Warning System
+
+Adapters should generate warnings for non-fatal issues:
+
+```go configadapters.go:38-44
+func (w Warning) String() string {
+    var directive string
+    if w.Directive != "" {
+        directive = fmt.Sprintf(" (%s)", w.Directive)
+    }
+    return fmt.Sprintf("%s:%d%s: %s", w.File, w.Line, directive, w.Message)
+}
+```
+
+Example warning generation:
+
+```go
+warnings := []caddyconfig.Warning{
+    {
+        File:      "Caddyfile",
+        Line:      42,
+        Directive: "reverse_proxy",
+        Message:   "using deprecated syntax; consider updating to new format",
+    },
+}
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Preserve Line Information">
+    Track file and line numbers to provide helpful error messages:
+    
+    ```go
+    return nil, warnings, fmt.Errorf("%s:%d: invalid directive", file, line)
+    ```
+  </Step>
+
+  <Step title="Use Warning System">
+    Generate warnings for deprecated features or potential issues:
+    
+    ```go
+    warnings = append(warnings, caddyconfig.Warning{
+        File:    file,
+        Line:    line,
+        Message: "deprecated feature",
+    })
+    ```
+  </Step>
+
+  <Step title="Validate Early">
+    Catch errors during parsing rather than waiting for Caddy to load the config:
+    
+    ```go
+    if required == "" {
+        return nil, nil, fmt.Errorf("missing required field")
+    }
+    ```
+  </Step>
+
+  <Step title="Use Helper Functions">
+    Leverage the `JSON()` and `JSONModuleObject()` helpers:
+    
+    ```go
+    handlerJSON := caddyconfig.JSONModuleObject(handler, "handler", "file_server", &warnings)
+    ```
+  </Step>
+
+  <Step title="Document Your Format">
+    Provide clear documentation and examples for your adapter's input format.
+  </Step>
+</Steps>
+
+<Warning>
+**Common Mistakes:**
+- Not preserving source location information
+- Failing to handle edge cases in the input format
+- Generating invalid JSON (always validate output)
+- Not using the warning system for non-fatal issues
+</Warning>
+
+## Testing Adapters
+
+```go
+func TestAdapter(t *testing.T) {
+    adapter := YAMLAdapter{}
+    
+    input := []byte(`
+    apps:
+      http:
+        servers:
+          srv0:
+            listen: [":80"]
+    `)
+    
+    result, warnings, err := adapter.Adapt(input, nil)
+    if err != nil {
+        t.Fatalf("adaptation failed: %v", err)
+    }
+    
+    if len(warnings) > 0 {
+        t.Logf("warnings: %v", warnings)
+    }
+    
+    // Validate the result is valid JSON
+    var cfg map[string]any
+    if err := json.Unmarshal(result, &cfg); err != nil {
+        t.Fatalf("result is not valid JSON: %v", err)
+    }
+}
+```

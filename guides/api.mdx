@@ -1,0 +1,397 @@
+---
+title: Using the Admin API
+description: Manage and configure Caddy at runtime using the powerful Admin API with JSON configuration
+---
+
+# Using the Admin API
+
+The Caddy Admin API allows you to manage your server at runtime without restarts. It provides full control over configuration, certificates, and server state.
+
+## Admin Endpoint
+
+By default, the admin API listens on `localhost:2019`:
+
+```bash
+curl localhost:2019/config/
+```
+
+### Custom Listen Address
+
+Change the admin endpoint address:
+
+<CodeGroup>
+```json JSON
+{
+  "admin": {
+    "listen": "127.0.0.1:2020"
+  }
+}
+```
+
+```caddyfile Caddyfile
+{
+    admin 127.0.0.1:2020
+}
+```
+</CodeGroup>
+
+<Note>
+  The admin endpoint can be configured via the `CADDY_ADMIN` environment variable, which defaults to `localhost:2019`.
+</Note>
+
+### Disable Admin API
+
+```json
+{
+  "admin": {
+    "disabled": true
+  }
+}
+```
+
+<Warning>
+  Disabling the admin API makes runtime changes impossible. You'll need to restart Caddy to apply new configurations.
+</Warning>
+
+## Configuration Management
+
+### Get Current Config
+
+Retrieve the entire configuration:
+
+```bash
+curl localhost:2019/config/ | jq
+```
+
+### Load Configuration
+
+Replace the entire configuration:
+
+```bash
+curl -X POST localhost:2019/load \
+  -H "Content-Type: application/json" \
+  -d @config.json
+```
+
+### Update Specific Path
+
+Modify a specific configuration path:
+
+```bash
+# Add a new route
+curl -X POST localhost:2019/config/apps/http/servers/srv0/routes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "match": [{"host": ["example.com"]}],
+    "handle": [{"handler": "file_server"}]
+  }'
+```
+
+### PATCH vs POST vs PUT
+
+- **GET** - Retrieve configuration
+- **POST** - Add to an array or create if doesn't exist  
+- **PUT** - Create new value (fails if exists)
+- **PATCH** - Update existing value (fails if doesn't exist)
+- **DELETE** - Remove configuration
+
+<CodeGroup>
+```bash POST (Append)
+curl -X POST localhost:2019/config/apps/http/servers/srv0/routes/... \
+  -H "Content-Type: application/json" \
+  -d '{"handle":[{"handler":"static_response","body":"Hello"}]}'
+```
+
+```bash PATCH (Update)
+curl -X PATCH localhost:2019/config/apps/http/servers/srv0/routes/0 \
+  -H "Content-Type: application/json" \
+  -d '{"handle":[{"handler":"file_server"}]}'
+```
+
+```bash DELETE (Remove)
+curl -X DELETE localhost:2019/config/apps/http/servers/srv0/routes/0
+```
+</CodeGroup>
+
+## Using @id for Easier Access
+
+Identify configuration objects with `@id` for cleaner API paths:
+
+<Steps>
+
+### Add an ID to Configuration
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "myserver": {
+          "@id": "my-server",
+          "listen": [":80"]
+        }
+      }
+    }
+  }
+}
+```
+
+### Access by ID
+
+```bash
+# Instead of: /config/apps/http/servers/myserver
+curl localhost:2019/id/my-server
+```
+
+</Steps>
+
+## Common Operations
+
+### Add a New Site
+
+```bash
+curl -X POST localhost:2019/config/apps/http/servers/srv0/routes/0 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "@id": "example-site",
+    "match": [{"host": ["example.com"]}],
+    "handle": [
+      {
+        "handler": "subroute",
+        "routes": [
+          {
+            "handle": [
+              {
+                "handler": "file_server",
+                "root": "/var/www/html"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+### Update Upstream Servers
+
+```bash
+curl -X PATCH localhost:2019/config/apps/http/servers/srv0/routes/0/handle/0/upstreams \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"dial": "10.0.0.1:8080"},
+    {"dial": "10.0.0.2:8080"},
+    {"dial": "10.0.0.3:8080"}
+  ]'
+```
+
+### Reload Certificates
+
+Trigger certificate renewal:
+
+```bash
+curl -X POST localhost:2019/config/apps/tls/certificates/automate
+```
+
+## Security
+
+### Origin Enforcement
+
+Protect against DNS rebinding attacks:
+
+```json
+{
+  "admin": {
+    "enforce_origin": true,
+    "origins": [
+      "localhost:2019",
+      "admin.example.com:2019"
+    ]
+  }
+}
+```
+
+### Remote Admin (TLS)
+
+Secure the admin endpoint with mutual TLS:
+
+<CodeGroup>
+```json JSON
+{
+  "admin": {
+    "identity": {
+      "identifiers": ["admin.example.com"],
+      "issuers": [
+        {"module": "acme", "email": "admin@example.com"}
+      ]
+    },
+    "remote": {
+      "listen": ":2021",
+      "access_control": [
+        {
+          "public_keys": ["<base64-encoded-public-key>"],
+          "permissions": [
+            {
+              "paths": ["/config/*", "/load"],
+              "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+```bash Access Remote Admin
+curl https://admin.example.com:2021/config/ \
+  --cert client.pem \
+  --key client-key.pem
+```
+</CodeGroup>
+
+<Note>
+  Remote admin requires identity management to be configured. The endpoint uses mutual TLS for authentication.
+</Note>
+
+## Debugging Endpoints
+
+Caddy exposes several debugging endpoints:
+
+### pprof Profiling
+
+```bash
+# CPU profile
+curl localhost:2019/debug/pprof/profile?seconds=30 > cpu.prof
+
+# Memory profile  
+curl localhost:2019/debug/pprof/heap > mem.prof
+
+# Goroutine dump
+curl localhost:2019/debug/pprof/goroutine > goroutines.txt
+```
+
+### Metrics
+
+```bash
+# Expvar metrics
+curl localhost:2019/debug/vars | jq
+```
+
+## Graceful Shutdown
+
+Stop Caddy gracefully:
+
+```bash
+curl -X POST localhost:2019/stop
+```
+
+## ETag Support
+
+The API supports ETags to prevent concurrent modifications:
+
+```bash
+# Get config with ETag
+CONFIG=$(curl -i localhost:2019/config/)
+ETAG=$(echo "$CONFIG" | grep -i etag | awk '{print $2}' | tr -d '\r')
+
+# Update only if ETag matches
+curl -X PATCH localhost:2019/config/apps/http/servers/srv0 \
+  -H "Content-Type: application/json" \
+  -H "If-Match: $ETAG" \
+  -d '{"listen":[": 8080"]}'
+```
+
+## Complete Example
+
+Manage a site lifecycle via API:
+
+```bash
+#!/bin/bash
+
+API="http://localhost:2019"
+
+# 1. Add a new site
+echo "Adding new site..."
+curl -X POST "$API/config/apps/http/servers/srv0/routes/0" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "@id": "my-app",
+    "match": [{"host": ["app.example.com"]}],
+    "handle": [{
+      "handler": "reverse_proxy",
+      "upstreams": [{"dial": "localhost:8080"}]
+    }]
+  }'
+
+# 2. Verify configuration
+echo "\nVerifying config..."
+curl "$API/id/my-app" | jq
+
+# 3. Update upstream
+echo "\nUpdating upstream..."
+curl -X PATCH "$API/id/my-app/handle/0/upstreams/0" \
+  -H "Content-Type: application/json" \
+  -d '{"dial": "localhost:8081"}'
+
+# 4. Add health check
+echo "\nAdding health check..."
+curl -X PATCH "$API/id/my-app/handle/0/health_checks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "active": {
+      "uri": "/health",
+      "interval": "30s"
+    }
+  }'
+
+# 5. Remove site
+echo "\nRemoving site..."
+curl -X DELETE "$API/id/my-app"
+```
+
+## Best Practices
+
+<Steps>
+
+### API Usage Guidelines
+
+1. **Use @id fields** - Makes configuration paths more readable and stable
+2. **Check ETags** - Prevent concurrent modification conflicts
+3. **Validate JSON** - Use `jq` or similar to validate before posting
+4. **Test changes** - Use GET to verify changes were applied correctly
+5. **Handle errors** - Check HTTP status codes and response bodies
+
+</Steps>
+
+<Tip>
+  The admin API returns detailed error messages in JSON format when operations fail. Always check the response body for debugging information.
+</Tip>
+
+## Troubleshooting
+
+### Connection Refused
+
+```bash
+# Check if admin endpoint is configured
+caddy environ | grep CADDY_ADMIN
+
+# Verify Caddy is running
+caddy list-modules --versions | head -1
+```
+
+### Permission Denied
+
+Ensure origin/host headers match allowed origins:
+
+```bash
+curl localhost:2019/config/ -H "Host: localhost:2019"
+```
+
+### Invalid JSON
+
+Validate JSON before posting:
+
+```bash
+jq empty config.json && echo "Valid JSON"
+```

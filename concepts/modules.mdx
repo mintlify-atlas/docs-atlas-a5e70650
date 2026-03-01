@@ -1,0 +1,525 @@
+---
+title: "Module System"
+description: "Learn how Caddy's module system enables extensibility and customization"
+---
+
+Caddy's module system is the foundation of its extensibility. Every component in Caddy—from HTTP handlers to TLS certificate issuers—is implemented as a module. This architecture allows you to extend Caddy with custom functionality or use third-party modules.
+
+## What is a Module?
+
+A module is any Go type that implements the `Module` interface:
+
+```go modules.go:54-60
+type Module interface {
+    // This method indicates that the type is a Caddy module.
+    // The returned ModuleInfo must have both a name and a constructor function.
+    CaddyModule() ModuleInfo
+}
+```
+
+### Module Information
+
+Each module must provide metadata about itself:
+
+```go modules.go:62-77
+type ModuleInfo struct {
+    // ID is the "full name" of the module.
+    // It must be unique and properly namespaced.
+    ID ModuleID
+
+    // New returns a pointer to a new, empty instance of the module's type.
+    // This method must not have any side-effects.
+    New func() Module
+}
+```
+
+## Module Namespaces
+
+Module IDs follow a hierarchical naming convention:
+
+```go modules.go:79-98
+// ModuleID is a string that uniquely identifies a Caddy module.
+// It consists of dot-separated labels which form a simple hierarchy.
+//
+// Examples of valid IDs:
+// - http
+// - http.handlers.file_server
+// - caddy.logging.encoders.json
+type ModuleID string
+```
+
+<Info>
+**Namespace structure:** `<namespace>.<name>`
+
+Top-level modules (apps) have no namespace, just a name like `http` or `tls`.
+</Info>
+
+### Common Namespaces
+
+| Namespace | Purpose | Example Modules |
+|-----------|---------|----------------|
+| *(empty)* | Apps | `http`, `tls`, `pki` |
+| `http.handlers` | HTTP handlers | `file_server`, `reverse_proxy`, `rewrite` |
+| `http.matchers` | Request matchers | `host`, `path`, `header` |
+| `tls.issuance` | Certificate issuers | `acme`, `internal`, `zerossl` |
+| `tls.certificates` | Cert loaders | `automate`, `load_files`, `load_folders` |
+| `caddy.storage` | Storage backends | `file_system`, `consul`, `s3` |
+| `caddy.logging.encoders` | Log encoders | `json`, `console`, `logfmt` |
+
+## Module Registration
+
+Modules must be registered before Caddy can use them:
+
+```go modules.go:130-161
+func RegisterModule(instance Module) {
+    mod := instance.CaddyModule()
+
+    if mod.ID == "" {
+        panic("module ID missing")
+    }
+    if mod.ID == "caddy" || mod.ID == "admin" {
+        panic(fmt.Sprintf("module ID '%s' is reserved", mod.ID))
+    }
+    if mod.New == nil {
+        panic("missing ModuleInfo.New")
+    }
+    if val := mod.New(); val == nil {
+        panic("ModuleInfo.New must return a non-nil module instance")
+    }
+
+    modulesMu.Lock()
+    defer modulesMu.Unlock()
+
+    if _, ok := modules[string(mod.ID)]; ok {
+        panic(fmt.Sprintf("module already registered: %s", mod.ID))
+    }
+    modules[string(mod.ID)] = mod
+}
+```
+
+<Warning>
+Module registration typically happens in `init()` functions and will panic if:
+- The module ID is empty or reserved
+- The constructor function is nil
+- The module is already registered
+</Warning>
+
+### Example Registration
+
+```go
+package myhandler
+
+import "github.com/caddyserver/caddy/v2"
+
+func init() {
+    caddy.RegisterModule(Handler{})
+}
+
+type Handler struct {
+    // Your fields here
+}
+
+func (Handler) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "http.handlers.my_handler",
+        New: func() caddy.Module { return new(Handler) },
+    }
+}
+```
+
+## Module Lifecycle
+
+When a module is loaded, it goes through several phases:
+
+<Steps>
+  <Step title="Instantiation">
+    Caddy calls `ModuleInfo.New()` to create a new instance:
+    
+    ```go context.go:369
+    val := modInfo.New()
+    ```
+  </Step>
+
+  <Step title="Unmarshaling">
+    The module's configuration is unmarshaled into the instance:
+    
+    ```go context.go:382-387
+    if len(rawMsg) > 0 {
+        err := StrictUnmarshalJSON(rawMsg, &val)
+        if err != nil {
+            return nil, fmt.Errorf("decoding module config: %s: %v", modInfo, err)
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Provisioning">
+    If the module implements `Provisioner`, its `Provision()` method is called:
+    
+    ```go modules.go:288-298
+    type Provisioner interface {
+        Provision(Context) error
+    }
+    ```
+    
+    ```go context.go:418-430
+    if prov, ok := val.(Provisioner); ok {
+        err = prov.Provision(ctx)
+        if err != nil {
+            // Cleanup on error
+            if cleanerUpper, ok := val.(CleanerUpper); ok {
+                cleanerUpper.Cleanup()
+            }
+            return nil, fmt.Errorf("provision %s: %v", modInfo, err)
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Validation">
+    If the module implements `Validator`, its `Validate()` method is called:
+    
+    ```go modules.go:300-307
+    type Validator interface {
+        Validate() error
+    }
+    ```
+    
+    ```go context.go:433-444
+    if validator, ok := val.(Validator); ok {
+        err = validator.Validate()
+        if err != nil {
+            // Cleanup on error
+            if cleanerUpper, ok := val.(CleanerUpper); ok {
+                cleanerUpper.Cleanup()
+            }
+            return nil, fmt.Errorf("%s: invalid configuration: %v", modInfo, err)
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Usage">
+    The module is now ready to be used. It's typically type-asserted to a specific interface expected by the host module.
+  </Step>
+
+  <Step title="Cleanup">
+    When the config is unloaded, if the module implements `CleanerUpper`, its `Cleanup()` method is called:
+    
+    ```go modules.go:309-317
+    type CleanerUpper interface {
+        Cleanup() error
+    }
+    ```
+    
+    ```go context.go:75-83
+    for modName, modInstances := range newCtx.moduleInstances {
+        for _, inst := range modInstances {
+            if cu, ok := inst.(CleanerUpper); ok {
+                err := cu.Cleanup()
+                if err != nil {
+                    log.Printf("[ERROR] %s (%p): cleanup: %v", modName, inst, err)
+                }
+            }
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Loading Modules
+
+Caddy provides the `LoadModule` method to load modules from configuration:
+
+```go context.go:181
+func (ctx Context) LoadModule(structPointer any, fieldName string) (any, error)
+```
+
+### Supported Field Types
+
+The `LoadModule` method supports several raw module types:
+
+<Accordion title="json.RawMessage">
+For a single module:
+
+```go
+type MyConfig struct {
+    HandlerRaw json.RawMessage `json:"handler,omitempty" caddy:"namespace=http.handlers inline_key=handler"`
+}
+
+val, err := ctx.LoadModule(cfg, "HandlerRaw")
+handler := val.(caddyhttp.MiddlewareHandler)
+```
+</Accordion>
+
+<Accordion title="[]json.RawMessage">
+For a list of modules:
+
+```go
+type MyConfig struct {
+    HandlersRaw []json.RawMessage `json:"handlers,omitempty" caddy:"namespace=http.handlers inline_key=handler"`
+}
+
+val, err := ctx.LoadModule(cfg, "HandlersRaw")
+handlers := val.([]any)
+for _, h := range handlers {
+    handler := h.(caddyhttp.MiddlewareHandler)
+}
+```
+</Accordion>
+
+<Accordion title="map[string]json.RawMessage (ModuleMap)">
+For a map where keys are module names:
+
+```go
+type MyConfig struct {
+    AppsRaw caddy.ModuleMap `json:"apps,omitempty" caddy:"namespace="`
+}
+
+val, err := ctx.LoadModule(cfg, "AppsRaw")
+apps := val.(map[string]any)
+for name, app := range apps {
+    // Use the app
+}
+```
+</Accordion>
+
+### Struct Tags
+
+Modules are configured using struct tags:
+
+```go modules.go:319-336
+func ParseStructTag(tag string) (map[string]string, error) {
+    results := make(map[string]string)
+    pairs := strings.Split(tag, " ")
+    for i, pair := range pairs {
+        if pair == "" {
+            continue
+        }
+        before, after, isCut := strings.Cut(pair, "=")
+        if !isCut {
+            return nil, fmt.Errorf("missing key in '%s' (pair %d)", pair, i)
+        }
+        results[before] = after
+    }
+    return results, nil
+}
+```
+
+**Required tags:**
+- `namespace` - The module namespace to search (e.g., `http.handlers`)
+
+**Optional tags:**
+- `inline_key` - The JSON key containing the module name (e.g., `handler`)
+
+<Note>
+When using `ModuleMap`, the map key IS the module name, so `inline_key` is not needed.
+</Note>
+
+## Creating Custom Modules
+
+Here's a complete example of a custom HTTP handler module:
+
+<Steps>
+  <Step title="Define the Module">
+    ```go
+    package greeting
+
+    import (
+        "fmt"
+        "net/http"
+        
+        "github.com/caddyserver/caddy/v2"
+        "github.com/caddyserver/caddy/v2/modules/caddyhttp"
+        "go.uber.org/zap"
+    )
+
+    func init() {
+        caddy.RegisterModule(Greeting{})
+    }
+
+    type Greeting struct {
+        Message string `json:"message,omitempty"`
+        logger  *zap.Logger
+    }
+
+    func (Greeting) CaddyModule() caddy.ModuleInfo {
+        return caddy.ModuleInfo{
+            ID:  "http.handlers.greeting",
+            New: func() caddy.Module { return new(Greeting) },
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Implement Provisioner">
+    ```go
+    func (g *Greeting) Provision(ctx caddy.Context) error {
+        g.logger = ctx.Logger()
+        if g.Message == "" {
+            g.Message = "Hello, World!"
+        }
+        return nil
+    }
+    ```
+  </Step>
+
+  <Step title="Implement Validator">
+    ```go
+    func (g Greeting) Validate() error {
+        if len(g.Message) > 1000 {
+            return fmt.Errorf("message too long (max 1000 chars)")
+        }
+        return nil
+    }
+    ```
+  </Step>
+
+  <Step title="Implement Handler Interface">
+    ```go
+    func (g Greeting) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+        g.logger.Info("serving greeting",
+            zap.String("message", g.Message),
+            zap.String("remote", r.RemoteAddr),
+        )
+        w.Write([]byte(g.Message))
+        return nil
+    }
+    ```
+  </Step>
+
+  <Step title="Add Interface Guards">
+    ```go
+    var (
+        _ caddy.Provisioner              = (*Greeting)(nil)
+        _ caddy.Validator                = (*Greeting)(nil)
+        _ caddyhttp.MiddlewareHandler    = (*Greeting)(nil)
+    )
+    ```
+  </Step>
+</Steps>
+
+## Module Discovery
+
+Caddy provides functions to discover registered modules:
+
+```go modules.go:195-242
+// GetModules returns all modules in the given scope/namespace
+func GetModules(scope string) []ModuleInfo {
+    modulesMu.RLock()
+    defer modulesMu.RUnlock()
+
+    scopeParts := strings.Split(scope, ".")
+    if scope == "" {
+        scopeParts = []string{}
+    }
+
+    var mods []ModuleInfo
+iterateModules:
+    for id, m := range modules {
+        modParts := strings.Split(id, ".")
+
+        // match only the next level of nesting
+        if len(modParts) != len(scopeParts)+1 {
+            continue
+        }
+
+        // specified parts must be exact matches
+        for i := range scopeParts {
+            if modParts[i] != scopeParts[i] {
+                continue iterateModules
+            }
+        }
+
+        mods = append(mods, m)
+    }
+
+    // make return value deterministic
+    sort.Slice(mods, func(i, j int) bool {
+        return mods[i].ID < mods[j].ID
+    })
+
+    return mods
+}
+```
+
+Examples:
+
+```go
+// Get all HTTP handler modules
+handlers := caddy.GetModules("http.handlers")
+
+// Get all top-level app modules  
+apps := caddy.GetModules("")
+
+// Get all TLS certificate issuers
+issuers := caddy.GetModules("tls.issuance")
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Always Use Pointers">
+    Module constructors should return pointers:
+    
+    ```go
+    New: func() caddy.Module { return new(MyModule) }
+    ```
+  </Step>
+
+  <Step title="Validate Configuration">
+    Implement `Validator` to catch configuration errors early:
+    
+    ```go
+    func (m MyModule) Validate() error {
+        if m.Required == "" {
+            return fmt.Errorf("required field is empty")
+        }
+        return nil
+    }
+    ```
+  </Step>
+
+  <Step title="Clean Up Resources">
+    Implement `CleanerUpper` if your module allocates resources:
+    
+    ```go
+    func (m *MyModule) Cleanup() error {
+        if m.conn != nil {
+            return m.conn.Close()
+        }
+        return nil
+    }
+    ```
+  </Step>
+
+  <Step title="Use Context Logger">
+    Get a properly-configured logger from the context:
+    
+    ```go
+    func (m *MyModule) Provision(ctx caddy.Context) error {
+        m.logger = ctx.Logger()
+        return nil
+    }
+    ```
+  </Step>
+
+  <Step title="Add Interface Guards">
+    Use compile-time interface guards to catch mistakes:
+    
+    ```go
+    var (
+        _ caddy.Provisioner = (*MyModule)(nil)
+        _ caddy.Validator   = (*MyModule)(nil)
+    )
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+**Common Pitfalls:**
+- Forgetting to register the module in `init()`
+- Not returning pointers from constructors
+- Performing I/O in `Provision()` that should be in `Start()`
+- Not cleaning up resources in `Cleanup()`
+</Warning>

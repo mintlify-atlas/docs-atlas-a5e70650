@@ -1,0 +1,453 @@
+---
+title: Plugin Development Tutorial
+description: Step-by-step guide to creating a complete Caddy plugin from scratch
+---
+
+This tutorial walks you through creating a complete Caddy HTTP handler plugin that adds custom headers and logs request information.
+
+## What We're Building
+
+We'll create a plugin called `requestinfo` that:
+
+- Adds custom headers to HTTP responses
+- Logs request details (method, path, client IP)
+- Supports Caddyfile configuration
+- Implements the full module lifecycle
+
+## Prerequisites
+
+- [Go 1.25.0 or newer](https://golang.org/dl/)
+- Basic understanding of Go and HTTP
+- Familiarity with Caddy configuration
+
+## Step 1: Create the Module Structure
+
+Create a new directory for your plugin:
+
+```bash
+mkdir -p caddy-requestinfo
+cd caddy-requestinfo
+go mod init github.com/yourusername/caddy-requestinfo
+```
+
+Create the main file `requestinfo.go`:
+
+```go
+package requestinfo
+
+import (
+    "fmt"
+    "net/http"
+    "time"
+
+    "github.com/caddyserver/caddy/v2"
+    "github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+    "github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+    "github.com/caddyserver/caddy/v2/modules/caddyhttp"
+    "go.uber.org/zap"
+)
+```
+
+## Step 2: Define the Module Structure
+
+Based on the pattern from `modules/caddyhttp/staticresp.go:88`, define your handler:
+
+```go
+// RequestInfo is a handler that logs request information
+// and adds custom headers
+type RequestInfo struct {
+    // HeaderName is the name of the header to add
+    HeaderName string `json:"header_name,omitempty"`
+
+    // HeaderValue is the value of the header to add
+    HeaderValue string `json:"header_value,omitempty"`
+
+    // LogEnabled controls whether to log request info
+    LogEnabled bool `json:"log_enabled,omitempty"`
+
+    logger *zap.Logger
+}
+```
+
+## Step 3: Implement the Module Interface
+
+Implement `CaddyModule()` from `modules.go:54`:
+
+```go
+// CaddyModule returns the Caddy module information
+func (RequestInfo) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "http.handlers.requestinfo",
+        New: func() caddy.Module { return new(RequestInfo) },
+    }
+}
+```
+
+<Note>
+The module ID `http.handlers.requestinfo` places this in the HTTP handlers namespace.
+</Note>
+
+## Step 4: Implement the Lifecycle Methods
+
+### Provision
+
+Implement `Provision()` based on `modules/caddyhttp/tracing/module.go:48`:
+
+```go
+// Provision implements caddy.Provisioner
+func (r *RequestInfo) Provision(ctx caddy.Context) error {
+    r.logger = ctx.Logger()
+
+    // Set default values
+    if r.HeaderName == "" {
+        r.HeaderName = "X-Request-Info"
+    }
+    if r.HeaderValue == "" {
+        r.HeaderValue = "Processed"
+    }
+
+    r.logger.Info("request info handler provisioned",
+        zap.String("header_name", r.HeaderName),
+        zap.Bool("logging", r.LogEnabled))
+
+    return nil
+}
+```
+
+### Validate
+
+```go
+// Validate implements caddy.Validator
+func (r *RequestInfo) Validate() error {
+    if r.HeaderName == "" {
+        return fmt.Errorf("header_name cannot be empty")
+    }
+    return nil
+}
+```
+
+## Step 5: Implement the HTTP Handler
+
+Implement `ServeHTTP()` to handle requests:
+
+```go
+// ServeHTTP implements caddyhttp.MiddlewareHandler
+func (r RequestInfo) ServeHTTP(w http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error {
+    // Log request information if enabled
+    if r.LogEnabled {
+        r.logger.Info("request received",
+            zap.String("method", req.Method),
+            zap.String("path", req.URL.Path),
+            zap.String("remote_addr", req.RemoteAddr),
+            zap.String("user_agent", req.UserAgent()),
+            zap.Time("timestamp", time.Now()))
+    }
+
+    // Add custom header
+    w.Header().Set(r.HeaderName, r.HeaderValue)
+
+    // Continue to the next handler
+    return next.ServeHTTP(w, req)
+}
+```
+
+## Step 6: Add Caddyfile Support
+
+Implement `UnmarshalCaddyfile()` based on `modules/caddyhttp/staticresp.go:141`:
+
+```go
+// UnmarshalCaddyfile sets up the handler from Caddyfile tokens. Syntax:
+//
+//  requestinfo {
+//      header_name <name>
+//      header_value <value>
+//      log_enabled
+//  }
+func (r *RequestInfo) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+    d.Next() // consume directive name
+
+    // No same-line arguments expected
+    if d.NextArg() {
+        return d.ArgErr()
+    }
+
+    // Parse block
+    for d.NextBlock(0) {
+        switch d.Val() {
+        case "header_name":
+            if !d.NextArg() {
+                return d.ArgErr()
+            }
+            r.HeaderName = d.Val()
+
+        case "header_value":
+            if !d.NextArg() {
+                return d.ArgErr()
+            }
+            r.HeaderValue = d.Val()
+
+        case "log_enabled":
+            r.LogEnabled = true
+
+        default:
+            return d.Errf("unrecognized subdirective: %s", d.Val())
+        }
+    }
+
+    return nil
+}
+```
+
+## Step 7: Register the Module
+
+Add registration in the `init()` function from `modules/caddyhttp/tracing/module.go:15`:
+
+```go
+func init() {
+    caddy.RegisterModule(RequestInfo{})
+    httpcaddyfile.RegisterHandlerDirective("requestinfo", parseCaddyfile)
+}
+
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+    var m RequestInfo
+    err := m.UnmarshalCaddyfile(h.Dispenser)
+    return &m, err
+}
+```
+
+## Step 8: Add Interface Guards
+
+Add compile-time interface checks:
+
+```go
+// Interface guards - compile-time verification
+var (
+    _ caddy.Provisioner           = (*RequestInfo)(nil)
+    _ caddy.Validator             = (*RequestInfo)(nil)
+    _ caddyhttp.MiddlewareHandler = (*RequestInfo)(nil)
+    _ caddyfile.Unmarshaler       = (*RequestInfo)(nil)
+)
+```
+
+## Step 9: Build with xcaddy
+
+Install xcaddy:
+
+```bash
+go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+```
+
+Build Caddy with your plugin:
+
+```bash
+xcaddy build \
+    --with github.com/yourusername/caddy-requestinfo
+```
+
+<Tip>
+For local development, use `--with github.com/yourusername/caddy-requestinfo=./caddy-requestinfo`
+</Tip>
+
+## Step 10: Test Your Plugin
+
+### JSON Configuration
+
+Create `caddy.json`:
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "example": {
+          "listen": [":8080"],
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "requestinfo",
+                  "header_name": "X-Custom-Header",
+                  "header_value": "Hello from plugin!",
+                  "log_enabled": true
+                },
+                {
+                  "handler": "static_response",
+                  "body": "Plugin is working!"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Caddyfile Configuration
+
+Create a `Caddyfile`:
+
+```caddyfile
+:8080 {
+    requestinfo {
+        header_name X-Custom-Header
+        header_value "Hello from plugin!"
+        log_enabled
+    }
+    respond "Plugin is working!"
+}
+```
+
+### Run and Test
+
+```bash
+# Run with JSON config
+./caddy run --config caddy.json
+
+# Or with Caddyfile
+./caddy run --config Caddyfile
+
+# Test in another terminal
+curl -v http://localhost:8080
+```
+
+You should see:
+- The custom header in the response
+- Request logs in the Caddy output (if `log_enabled` is true)
+
+## Complete Code
+
+<CodeGroup>
+```go requestinfo.go
+package requestinfo
+
+import (
+    "fmt"
+    "net/http"
+    "time"
+
+    "github.com/caddyserver/caddy/v2"
+    "github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+    "github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+    "github.com/caddyserver/caddy/v2/modules/caddyhttp"
+    "go.uber.org/zap"
+)
+
+func init() {
+    caddy.RegisterModule(RequestInfo{})
+    httpcaddyfile.RegisterHandlerDirective("requestinfo", parseCaddyfile)
+}
+
+type RequestInfo struct {
+    HeaderName  string `json:"header_name,omitempty"`
+    HeaderValue string `json:"header_value,omitempty"`
+    LogEnabled  bool   `json:"log_enabled,omitempty"`
+    logger      *zap.Logger
+}
+
+func (RequestInfo) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID:  "http.handlers.requestinfo",
+        New: func() caddy.Module { return new(RequestInfo) },
+    }
+}
+
+func (r *RequestInfo) Provision(ctx caddy.Context) error {
+    r.logger = ctx.Logger()
+    if r.HeaderName == "" {
+        r.HeaderName = "X-Request-Info"
+    }
+    if r.HeaderValue == "" {
+        r.HeaderValue = "Processed"
+    }
+    return nil
+}
+
+func (r *RequestInfo) Validate() error {
+    if r.HeaderName == "" {
+        return fmt.Errorf("header_name cannot be empty")
+    }
+    return nil
+}
+
+func (r RequestInfo) ServeHTTP(w http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error {
+    if r.LogEnabled {
+        r.logger.Info("request received",
+            zap.String("method", req.Method),
+            zap.String("path", req.URL.Path),
+            zap.String("remote_addr", req.RemoteAddr),
+            zap.Time("timestamp", time.Now()))
+    }
+    w.Header().Set(r.HeaderName, r.HeaderValue)
+    return next.ServeHTTP(w, req)
+}
+
+func (r *RequestInfo) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+    d.Next()
+    if d.NextArg() {
+        return d.ArgErr()
+    }
+    for d.NextBlock(0) {
+        switch d.Val() {
+        case "header_name":
+            if !d.NextArg() {
+                return d.ArgErr()
+            }
+            r.HeaderName = d.Val()
+        case "header_value":
+            if !d.NextArg() {
+                return d.ArgErr()
+            }
+            r.HeaderValue = d.Val()
+        case "log_enabled":
+            r.LogEnabled = true
+        default:
+            return d.Errf("unrecognized subdirective: %s", d.Val())
+        }
+    }
+    return nil
+}
+
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+    var m RequestInfo
+    err := m.UnmarshalCaddyfile(h.Dispenser)
+    return &m, err
+}
+
+var (
+    _ caddy.Provisioner           = (*RequestInfo)(nil)
+    _ caddy.Validator             = (*RequestInfo)(nil)
+    _ caddyhttp.MiddlewareHandler = (*RequestInfo)(nil)
+    _ caddyfile.Unmarshaler       = (*RequestInfo)(nil)
+)
+```
+
+```go go.mod
+module github.com/yourusername/caddy-requestinfo
+
+go 1.25
+
+require (
+    github.com/caddyserver/caddy/v2 v2.8.0
+    go.uber.org/zap v1.27.0
+)
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Deep dive into module architecture
+  </Card>
+  <Card title="Testing Guide" icon="vial" href="/dev/testing">
+    Learn how to test your plugins
+  </Card>
+  <Card title="xcaddy Tool" icon="toolbox" href="/dev/xcaddy">
+    Master the xcaddy build tool
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Share your plugin with the community
+  </Card>
+</CardGroup>

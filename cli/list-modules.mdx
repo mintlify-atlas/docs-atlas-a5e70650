@@ -1,0 +1,304 @@
+---
+title: caddy list-modules
+description: List all installed Caddy modules with optional version and package information
+---
+
+The `caddy list-modules` command lists all installed Caddy modules, with optional version and package information.
+
+## Usage
+
+```bash
+caddy list-modules [flags]
+```
+
+## Description
+
+Lists all Caddy modules that are compiled into the binary. This is useful for:
+
+- **Checking what modules** are available in your build
+- **Verifying plugins** are installed
+- **Debugging** module issues
+- **Auditing** third-party dependencies
+- **Comparing** different Caddy builds
+
+Modules are organized into three categories:
+
+1. **Standard modules** - Shipped with official Caddy builds
+2. **Non-standard modules** - Third-party plugins
+3. **Unknown modules** - Modules where info couldn't be determined
+
+## Flags
+
+<ParamField path="--packages" type="boolean" default="false">
+  Print package paths for each module.
+  
+  Shows the Go module path and any replacements.
+</ParamField>
+
+<ParamField path="--versions" type="boolean" default="false">
+  Print version information for each module.
+  
+  Shows the Go module version (e.g., `v1.2.3`).
+</ParamField>
+
+<ParamField path="--skip-standard" type="boolean" default="false">
+  Skip printing standard modules.
+  
+  Useful when you only want to see third-party plugins.
+</ParamField>
+
+<ParamField path="--json" type="boolean" default="false">
+  Output modules in JSON format.
+  
+  Useful for programmatic processing.
+</ParamField>
+
+## Examples
+
+### List all modules
+
+```bash
+caddy list-modules
+```
+
+Output:
+
+```
+admin.api.load
+admin.api.metrics
+admin.api.pki
+caddy.adapters.caddyfile
+caddy.config_loaders.http
+caddy.logging.encoders.console
+caddy.logging.encoders.json
+caddy.logging.writers.file
+caddy.logging.writers.stderr
+caddy.logging.writers.stdout
+http
+http.authentication.hashes.bcrypt
+http.authentication.providers.http_basic
+http.handlers.error
+http.handlers.file_server
+http.handlers.headers
+http.handlers.reverse_proxy
+http.handlers.rewrite
+http.handlers.static_response
+http.handlers.templates
+http.matchers.expression
+http.matchers.file
+http.matchers.header
+http.matchers.host
+http.matchers.method
+http.matchers.path
+http.matchers.protocol
+http.matchers.query
+http.matchers.remote_ip
+http.reverse_proxy.circuit_breakers.status_code
+http.reverse_proxy.selection_policies.cookie
+http.reverse_proxy.selection_policies.first
+http.reverse_proxy.selection_policies.header
+http.reverse_proxy.selection_policies.ip_hash
+http.reverse_proxy.selection_policies.least_conn
+http.reverse_proxy.selection_policies.random
+http.reverse_proxy.selection_policies.random_choose
+http.reverse_proxy.selection_policies.round_robin
+http.reverse_proxy.selection_policies.uri_hash
+http.reverse_proxy.transport.fastcgi
+http.reverse_proxy.transport.http
+http.reverse_proxy.upstreams.srv
+tls
+tls.certificates.automate
+tls.certificates.load_files
+tls.certificates.load_folders
+tls.issuers.acme
+tls.issuers.internal
+tls.issuers.zerossl
+
+  Standard modules: 52
+```
+
+### List with versions
+
+```bash
+caddy list-modules --versions
+```
+
+Output includes version numbers:
+
+```
+admin.api.load v2.7.6
+admin.api.metrics v2.7.6
+http.handlers.reverse_proxy v2.7.6
+...
+```
+
+### List with package paths
+
+```bash
+caddy list-modules --packages
+```
+
+Output includes Go module paths:
+
+```
+admin.api.load github.com/caddyserver/caddy/v2
+http.handlers.reverse_proxy github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy
+...
+```
+
+### List with both versions and packages
+
+```bash
+caddy list-modules --versions --packages
+```
+
+### List only third-party plugins
+
+```bash
+caddy list-modules --skip-standard
+```
+
+Output:
+
+```
+http.handlers.cache github.com/caddyserver/cache-handler v0.8.0
+http.handlers.crowdsec github.com/hslatman/caddy-crowdsec-bouncer v1.0.0
+
+  Non-standard modules: 2
+```
+
+### JSON output
+
+```bash
+caddy list-modules --json
+```
+
+Output:
+
+```json
+[
+  {
+    "module_name": "admin.api.load",
+    "module_type": "standard",
+    "version": "v2.7.6",
+    "package_url": "github.com/caddyserver/caddy/v2"
+  },
+  {
+    "module_name": "http.handlers.reverse_proxy",
+    "module_type": "standard",
+    "version": "v2.7.6",
+    "package_url": "github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
+  },
+  {
+    "module_name": "http.handlers.cache",
+    "module_type": "non-standard",
+    "version": "v0.8.0",
+    "package_url": "github.com/caddyserver/cache-handler"
+  }
+]
+```
+
+### JSON output for third-party plugins only
+
+```bash
+caddy list-modules --skip-standard --json
+```
+
+## Exit Codes
+
+- `0` - Success
+
+## Module Naming
+
+Caddy modules follow a hierarchical naming convention:
+
+- `caddy.*` - Core Caddy modules
+- `http.*` - HTTP app modules
+- `http.handlers.*` - HTTP handlers
+- `http.matchers.*` - Request matchers
+- `http.reverse_proxy.*` - Reverse proxy sub-modules
+- `tls.*` - TLS app modules
+- `tls.issuers.*` - Certificate issuers
+
+## Module Types
+
+### Standard Modules
+
+Modules that ship with official Caddy builds:
+
+- Core functionality (admin API, config loaders)
+- HTTP server and handlers
+- TLS/ACME support
+- Logging and metrics
+
+### Non-Standard Modules
+
+Third-party plugins added via xcaddy or custom builds:
+
+- `http.handlers.cache` - HTTP cache
+- `dns.providers.*` - DNS providers for ACME
+- `http.handlers.crowdsec` - CrowdSec integration
+- Custom plugins
+
+## Programmatic Usage
+
+### Parse JSON output
+
+```bash
+# Count total modules
+caddy list-modules --json | jq 'length'
+
+# List only module names
+caddy list-modules --json | jq -r '.[].module_name'
+
+# Find specific module
+caddy list-modules --json | jq '.[] | select(.module_name == "http.handlers.cache")'
+
+# List non-standard modules
+caddy list-modules --json | jq '.[] | select(.module_type == "non-standard")'
+```
+
+### Check if module exists
+
+```bash
+#!/bin/bash
+MODULE="http.handlers.cache"
+
+if caddy list-modules | grep -q "^$MODULE$"; then
+    echo "Module $MODULE is installed"
+else
+    echo "Module $MODULE is NOT installed"
+    exit 1
+fi
+```
+
+### Compare two builds
+
+```bash
+# Save module lists
+caddy1 list-modules > build1.txt
+caddy2 list-modules > build2.txt
+
+# Compare
+diff build1.txt build2.txt
+```
+
+## Building with Custom Modules
+
+To add modules to your Caddy build, use xcaddy:
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/cache-handler \
+    --with github.com/caddy-dns/cloudflare
+```
+
+Then verify they're installed:
+
+```bash
+caddy list-modules --skip-standard
+```
+
+## Related Commands
+
+- [`caddy version`](/cli/version) - Show Caddy version

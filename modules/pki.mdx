@@ -1,0 +1,386 @@
+---
+title: PKI Module
+description: Public Key Infrastructure module for managing certificate authorities in Caddy
+---
+
+The PKI (Public Key Infrastructure) module provides facilities for creating and managing internal certificate authorities (CAs) within Caddy. This enables Caddy to issue certificates for internal services without relying on external CAs.
+
+## Overview
+
+Module ID: `pki`
+
+The PKI app can define certificate authorities capable of signing certificates. Other modules can use these CAs for:
+- Issuing certificates for internal services
+- Establishing trust relationships
+- Local development with valid HTTPS certificates
+
+<Note>
+By default, Caddy creates a "local" CA that is used for signing locally-trusted certificates. The root certificate is automatically installed in the system trust store.
+</Note>
+
+## Configuration
+
+### Basic Structure
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "local": {
+          "name": "Caddy Local Authority",
+          "root_common_name": "Caddy Local Authority - 2024 ECC Root",
+          "intermediate_common_name": "Caddy Local Authority - ECC Intermediate"
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+pki {
+  ca local {
+    name "Caddy Local Authority"
+  }
+}
+```
+</CodeGroup>
+
+## Certificate Authority Configuration
+
+### CA Parameters
+
+<ParamField path="name" type="string">
+  User-facing name of the certificate authority. 
+  
+  Default: `Caddy Local Authority`
+</ParamField>
+
+<ParamField path="root_common_name" type="string">
+  CommonName field for the root certificate.
+  
+  Default: `{pki.ca.name} - {time.now.year} ECC Root`
+  
+  Supports placeholders:
+  - `{pki.ca.name}` - The CA name
+  - `{time.now.year}` - Current year
+</ParamField>
+
+<ParamField path="intermediate_common_name" type="string">
+  CommonName field for intermediate certificates.
+  
+  Default: `{pki.ca.name} - ECC Intermediate`
+</ParamField>
+
+<ParamField path="intermediate_lifetime" type="duration">
+  Lifetime for intermediate certificates.
+  
+  Default: `168h` (7 days)
+  
+  Must be less than the root certificate lifetime.
+</ParamField>
+
+<ParamField path="install_trust" type="boolean">
+  Whether to install the CA's root certificate into system trust stores, including:
+  - System trust store (Windows, macOS, Linux)
+  - Java trust store
+  - Mozilla Firefox trust store
+  
+  Default: `true`
+</ParamField>
+
+<ParamField path="root" type="object">
+  Custom root certificate and key configuration. If omitted, Caddy generates a root certificate automatically.
+  
+  See [KeyPair Configuration](#keypair-configuration) below.
+</ParamField>
+
+<ParamField path="intermediate" type="object">
+  Custom intermediate certificate and key. If omitted, Caddy generates an intermediate automatically.
+  
+  See [KeyPair Configuration](#keypair-configuration) below.
+</ParamField>
+
+<ParamField path="maintenance_interval" type="duration">
+  How often to check if certificates need renewal.
+  
+  Default: `10m`
+</ParamField>
+
+<ParamField path="renewal_window_ratio" type="float">
+  Fraction of certificate lifetime (0.0–1.0) after which renewal is attempted.
+  
+  For example, `0.2` means renew when 20% of the lifetime remains (~73 days for a 1-year cert).
+  
+  Default: `0.2`
+</ParamField>
+
+<ParamField path="storage" type="object">
+  Custom storage module for this CA's certificates and keys, separate from Caddy's global storage.
+  
+  Useful for keeping signing keys in a different location than leaf certificates.
+</ParamField>
+
+### KeyPair Configuration
+
+For custom root or intermediate certificates:
+
+<ParamField path="certificate" type="string">
+  Path to the certificate file (PEM format)
+</ParamField>
+
+<ParamField path="key" type="string">
+  Path to the private key file (PEM format)
+</ParamField>
+
+<ParamField path="format" type="string">
+  Format of the certificate/key:
+  - `pem_file` - PEM files on disk (default)
+</ParamField>
+
+## Multiple Certificate Authorities
+
+You can define multiple CAs for different purposes:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "local": {
+          "name": "Caddy Local Authority",
+          "install_trust": true
+        },
+        "internal": {
+          "name": "Internal Services CA",
+          "install_trust": false,
+          "intermediate_lifetime": "720h",
+          "root_common_name": "Internal Services Root CA"
+        },
+        "development": {
+          "name": "Development CA",
+          "install_trust": true,
+          "root_common_name": "Dev Environment Root"
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+pki {
+  ca local {
+    name "Caddy Local Authority"
+    install_trust
+  }
+  
+  ca internal {
+    name "Internal Services CA"
+  }
+  
+  ca development {
+    name "Development CA"
+  }
+}
+```
+</CodeGroup>
+
+## Default CA
+
+The default CA has the ID `local` and is provisioned automatically if the PKI app is used. It provides:
+
+- **Automatic trust installation** - Root certificate installed in system trust stores
+- **Automatic renewal** - Intermediate certificates renewed before expiration
+- **Secure defaults** - ECC (Elliptic Curve Cryptography) certificates
+- **Local development** - Perfect for HTTPS in development without certificate warnings
+
+## Certificate Renewal
+
+Caddy automatically manages certificate renewal for CAs:
+
+1. **Maintenance checks** run at the interval specified by `maintenance_interval` (default: 10 minutes)
+2. **Renewal threshold** is calculated using `renewal_window_ratio` (default: 20% of lifetime remaining)
+3. **Automatic regeneration** of intermediate certificates before expiration
+4. **Root certificate renewal** if the root is managed by Caddy and approaching expiration
+
+<Note>
+Root certificates have a default lifetime of 10 years. Intermediate certificates have a default lifetime of 7 days and renew automatically.
+</Note>
+
+## Storage Locations
+
+By default, CA certificates and keys are stored at:
+
+```
+{caddy_data_dir}/pki/authorities/{ca_id}/
+  ├── root.crt          # Root certificate
+  ├── root.key          # Root private key
+  ├── intermediate.crt  # Intermediate certificate
+  └── intermediate.key  # Intermediate private key
+```
+
+Where:
+- `{caddy_data_dir}` is typically `~/.local/share/caddy` on Linux, `~/Library/Application Support/Caddy` on macOS, or `%AppData%/Caddy` on Windows
+- `{ca_id}` is the CA identifier (e.g., `local`)
+
+## Custom Storage Backend
+
+Use a custom storage backend for a CA:
+
+```json
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "secure-ca": {
+          "name": "Secure CA",
+          "storage": {
+            "module": "file_system",
+            "root": "/secure/storage/pki"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+## Using Custom Root Certificates
+
+Provide your own root certificate instead of having Caddy generate one:
+
+```json
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "custom": {
+          "name": "Custom Authority",
+          "root": {
+            "certificate": "/path/to/root.crt",
+            "key": "/path/to/root.key",
+            "format": "pem_file"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+## Trust Store Installation
+
+When `install_trust` is enabled (default), Caddy attempts to install the root certificate in:
+
+1. **System trust store**:
+   - Windows: Certificate Manager
+   - macOS: Keychain
+   - Linux: ca-certificates (Debian/Ubuntu) or ca-trust (RHEL/Fedora)
+
+2. **Java trust store** - If Java is installed
+
+3. **Mozilla Firefox** - If Firefox is installed
+
+<Note>
+You may be prompted for administrator/sudo password during trust installation.
+</Note>
+
+## Disable Trust Installation
+
+To prevent automatic trust installation:
+
+```json
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "local": {
+          "install_trust": false
+        }
+      }
+    }
+  }
+}
+```
+
+## Security Considerations
+
+- **Private keys** are stored with restrictive permissions (0600)
+- **Root certificates** should be rotated every 10 years (or as per your policy)
+- **Intermediate certificates** renew automatically every 7 days by default
+- **Trust installation** may require administrator privileges
+- **Custom storage** can be used to keep signing keys separate from leaf certificates
+
+## Examples
+
+### Development Environment
+
+Perfect for local HTTPS development:
+
+```json
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "local": {
+          "name": "Dev Local CA",
+          "install_trust": true
+        }
+      }
+    },
+    "http": {
+      "servers": {
+        "dev": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "match": [{"host": ["localhost"]}],
+              "handle": [{
+                "handler": "static_response",
+                "body": "Hello from local HTTPS!"
+              }],
+              "terminal": true
+            }
+          ]
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["localhost"],
+            "issuers": [{"module": "internal"}]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### Production Internal CA
+
+For internal services with longer-lived intermediates:
+
+```json
+{
+  "apps": {
+    "pki": {
+      "certificate_authorities": {
+        "internal": {
+          "name": "Internal Services CA",
+          "install_trust": false,
+          "intermediate_lifetime": "8760h",
+          "renewal_window_ratio": 0.1,
+          "maintenance_interval": "1h"
+        }
+      }
+    }
+  }
+}
+```

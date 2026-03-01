@@ -1,0 +1,602 @@
+---
+title: "Automatic HTTPS"
+description: "How Caddy automatically obtains and renews TLS certificates for your sites"
+---
+
+One of Caddy's most powerful features is **Automatic HTTPS**: the ability to automatically obtain, renew, and manage TLS certificates without any manual intervention. This page explains how the system works under the hood.
+
+## Overview
+
+Automatic HTTPS is enabled by default when Caddy detects qualifying domain names in your configuration. No additional configuration is required for basic use.
+
+<Info>
+Caddy uses **CertMagic** under the hood—a powerful library for automated certificate management that Caddy's creator also maintains.
+</Info>
+
+## How It Works
+
+Automatic HTTPS operates in two phases:
+
+### Phase 1: Preparation (During Provisioning)
+
+From `autohttps.go:71-518`, Caddy analyzes the configuration:
+
+<Steps>
+  <Step title="Extract Qualifying Domains">
+    Caddy scans all server blocks for domain names that qualify for certificates:
+    
+    ```go autohttps.go:148-168
+    // Find all qualifying domain names in this server
+    serverDomainSet := make(map[string]struct{})
+    for routeIdx, route := range srv.Routes {
+        for matcherSetIdx, matcherSet := range route.MatcherSets {
+            for matcherIdx, m := range matcherSet {
+                if hm, ok := m.(*MatchHost); ok {
+                    for hostMatcherIdx, d := range *hm {
+                        var err error
+                        d, err = repl.ReplaceOrErr(d, true, false)
+                        if err != nil {
+                            return fmt.Errorf("%s: route %d, matcher set %d, matcher %d, host matcher %d: %v",
+                                srvName, routeIdx, matcherSetIdx, matcherIdx, hostMatcherIdx, err)
+                        }
+                        if !slices.Contains(srv.AutoHTTPS.Skip, d) {
+                            serverDomainSet[d] = struct{}{}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Filter Qualifying Names">
+    Not all names qualify for public certificates:
+    
+    ```go autohttps.go:202-227
+    for d := range serverDomainSet {
+        if certmagic.SubjectQualifiesForCert(d) &&
+            !slices.Contains(srv.AutoHTTPS.SkipCerts, d) {
+            // If a certificate for this name is already loaded,
+            // don't obtain another one for it, unless we are
+            // supposed to ignore loaded certificates
+            if !srv.AutoHTTPS.IgnoreLoadedCerts && app.tlsApp.HasCertificateForSubject(d) {
+                logger.Info("skipping automatic certificate management because one or more matching certificates are already loaded",
+                    zap.String("domain", d),
+                    zap.String("server_name", srvName),
+                )
+                continue
+            }
+
+            // Most clients don't accept wildcards like *.tld
+            if strings.Contains(d, "*") &&
+                strings.Count(strings.Trim(d, "."), ".") == 1 {
+                logger.Warn("most clients do not trust second-level wildcard certificates (*.tld)",
+                    zap.String("domain", d))
+            }
+
+            uniqueDomainsForCerts[d] = struct{}{}
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Create Automation Policies">
+    Domains are assigned to automation policies based on their characteristics:
+    
+    ```go autohttps.go:293-339
+    var internal, tailscale []string
+    for d := range uniqueDomainsForCerts {
+        // Check if domain already has an explicit automation policy
+        if app.tlsApp.Automation != nil {
+            for _, ap := range app.tlsApp.Automation.Policies {
+                for _, apHost := range ap.Subjects() {
+                    if apHost == d {
+                        // If the automation policy has all internal subjects but no issuers,
+                        // use our internal issuer instead
+                        if len(ap.Issuers) == 0 && ap.AllInternalSubjects() {
+                            iss := new(caddytls.InternalIssuer)
+                            if err := iss.Provision(ctx); err != nil {
+                                return err
+                            }
+                            ap.Issuers = append(ap.Issuers, iss)
+                        }
+                        continue uniqueDomainsLoop
+                    }
+                }
+            }
+        }
+
+        // Separate internal, tailscale, and public domains
+        shouldUseInternal := func(ident string) bool {
+            usingDefaultIssuersAndIsIP := certmagic.SubjectIsIP(ident) &&
+                (app.tlsApp == nil || app.tlsApp.Automation == nil || len(app.tlsApp.Automation.Policies) == 0)
+            return !certmagic.SubjectQualifiesForPublicCert(d) || usingDefaultIssuersAndIsIP
+        }
+        if isTailscaleDomain(d) {
+            tailscale = append(tailscale, d)
+            delete(uniqueDomainsForCerts, d)
+        } else if shouldUseInternal(d) {
+            internal = append(internal, d)
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Set Up HTTP→HTTPS Redirects">
+    Automatic redirects are configured for each qualifying domain:
+    
+    ```go autohttps.go:520-551
+    func (app *App) makeRedirRoute(redirToPort uint, matcherSet MatcherSet) Route {
+        redirTo := "https://{http.request.host}"
+
+        // Only append port if it's non-standard
+        if redirToPort != uint(app.httpPort()) &&
+            redirToPort != uint(app.httpsPort()) &&
+            redirToPort != DefaultHTTPPort &&
+            redirToPort != DefaultHTTPSPort {
+            redirTo += ":" + strconv.Itoa(int(redirToPort))
+        }
+
+        redirTo += "{http.request.uri}"
+        return Route{
+            MatcherSets: []MatcherSet{matcherSet},
+            Handlers: []MiddlewareHandler{
+                StaticResponse{
+                    StatusCode: WeakString(strconv.Itoa(http.StatusPermanentRedirect)),
+                    Headers: http.Header{
+                        "Location": []string{redirTo},
+                    },
+                    Close: true,
+                },
+            },
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+### Phase 2: Certificate Management (After Server Start)
+
+From `autohttps.go:800-823`, certificates are obtained and managed:
+
+```go autohttps.go:810-823
+func (app *App) automaticHTTPSPhase2() error {
+    if len(app.allCertDomains) == 0 {
+        return nil
+    }
+    app.logger.Info("enabling automatic TLS certificate management",
+        zap.Strings("domains", internal.MaxSizeSubjectsListForLog(app.allCertDomains, 1000)),
+    )
+    err := app.tlsApp.Manage(app.allCertDomains)
+    if err != nil {
+        return fmt.Errorf("managing certificates for %d domains: %s", len(app.allCertDomains), err)
+    }
+    app.allCertDomains = nil // no longer needed; allow GC to deallocate
+    return nil
+}
+```
+
+<Warning>
+Phase 2 runs **after** all servers have started. This prevents race conditions where CertMagic might bind to ports before Caddy's servers can.
+</Warning>
+
+## Configuration Options
+
+You can control automatic HTTPS behavior per-server:
+
+```go autohttps.go:32-69
+type AutoHTTPSConfig struct {
+    // If true, automatic HTTPS will be entirely disabled,
+    // including certificate management and redirects.
+    Disabled bool `json:"disable,omitempty"`
+
+    // If true, only automatic HTTP->HTTPS redirects will
+    // be disabled, but other auto-HTTPS features will
+    // remain enabled.
+    DisableRedir bool `json:"disable_redirects,omitempty"`
+
+    // If true, automatic certificate management will be
+    // disabled, but other auto-HTTPS features will
+    // remain enabled.
+    DisableCerts bool `json:"disable_certificates,omitempty"`
+
+    // Hosts/domain names listed here will not be included
+    // in automatic HTTPS (they will not have certificates
+    // loaded nor redirects applied).
+    Skip []string `json:"skip,omitempty"`
+
+    // Hosts/domain names listed here will still be enabled
+    // for automatic HTTPS (unless in the Skip list), except
+    // that certificates will not be provisioned and managed
+    // for these names.
+    SkipCerts []string `json:"skip_certificates,omitempty"`
+
+    // By default, automatic HTTPS will obtain and renew
+    // certificates for qualifying hostnames. However, if
+    // a certificate with a matching SAN is already loaded
+    // into the cache, certificate management will not be
+    // enabled. To force automated certificate management
+    // regardless of loaded certificates, set this to true.
+    IgnoreLoadedCerts bool `json:"ignore_loaded_certificates,omitempty"`
+}
+```
+
+### Example Configuration
+
+<Accordion title="JSON Config">
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":443"],
+          "routes": [...],
+          "automatic_https": {
+            "disable_redirects": false,
+            "disable_certificates": false,
+            "skip": ["internal.example.com"],
+            "skip_certificates": ["*.dev.example.com"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+</Accordion>
+
+<Accordion title="Caddyfile">
+```caddyfile
+example.com {
+    # Automatic HTTPS enabled by default
+}
+
+internal.example.com {
+    # Disable all automatic HTTPS
+    auto_https off
+}
+
+staging.example.com {
+    # Enable HTTPS but disable redirects
+    auto_https disable_redirects
+}
+```
+</Accordion>
+
+## Automation Policies
+
+Automation policies control how certificates are obtained and managed:
+
+```go autohttps.go:559-754
+func (app *App) createAutomationPolicies(ctx caddy.Context, internalNames, tailscaleNames []string) error {
+    // Set up default issuer for ACME-based policies
+    var basePolicy *caddytls.AutomationPolicy
+    var foundBasePolicy bool
+    if app.tlsApp.Automation == nil {
+        app.tlsApp.Automation = new(caddytls.AutomationConfig)
+    }
+    for _, ap := range app.tlsApp.Automation.Policies {
+        // Configure default issuers
+        if ap.Issuers == nil {
+            var err error
+            ap.Issuers, err = caddytls.DefaultIssuersProvisioned(ctx)
+            if err != nil {
+                return err
+            }
+        }
+        for _, iss := range ap.Issuers {
+            if acmeIssuer, ok := iss.(acmeCapable); ok {
+                err := app.fillInACMEIssuer(acmeIssuer.GetACMEIssuer())
+                if err != nil {
+                    return err
+                }
+            }
+        }
+
+        // Identify base/catch-all policy
+        if !foundBasePolicy && len(ap.SubjectsRaw) == 0 {
+            basePolicy = ap
+            foundBasePolicy = true
+        }
+    }
+
+    // ... rest of policy creation ...
+}
+```
+
+### Internal Certificate Issuer
+
+For local/internal domains, Caddy uses its internal CA:
+
+```go autohttps.go:690-724
+if len(internalNames) > 0 {
+    internalIssuer := new(caddytls.InternalIssuer)
+
+    // Shallow-copy the base policy
+    policyCopy := *basePolicy
+    newPolicy := &policyCopy
+
+    // Provision the issuer
+    if err := internalIssuer.Provision(ctx); err != nil {
+        return err
+    }
+
+    // This policy should apply only to the given names
+    // and should use our issuer
+    newPolicy.SubjectsRaw = internalNames
+    newPolicy.Issuers = []certmagic.Issuer{internalIssuer}
+    err := app.tlsApp.AddAutomationPolicy(newPolicy)
+    if err != nil {
+        return err
+    }
+}
+```
+
+### Tailscale Integration
+
+Tailscale domains (*.ts.net) get special handling:
+
+```go autohttps.go:726-745
+if len(tailscaleNames) > 0 {
+    policyCopy := *basePolicy
+    newPolicy := &policyCopy
+
+    var ts caddytls.Tailscale
+    if err := ts.Provision(ctx); err != nil {
+        return err
+    }
+
+    newPolicy.SubjectsRaw = tailscaleNames
+    newPolicy.Issuers = nil
+    newPolicy.Managers = append(newPolicy.Managers, ts)
+    err := app.tlsApp.AddAutomationPolicy(newPolicy)
+    if err != nil {
+        return err
+    }
+}
+```
+
+## Certificate Management
+
+The TLS app manages certificates through automation policies:
+
+```go tls.go:547-605
+func (t *TLS) Manage(subjects map[string]struct{}) error {
+    // Bin names by AutomationPolicy for efficiency
+    policyToNames := make(map[*AutomationPolicy][]string)
+    for subj := range subjects {
+        ap := t.getAutomationPolicyForName(subj)
+        // By default, if a wildcard that covers the subj is also being
+        // managed, prefer using that over individual certs
+        if t.managingWildcardFor(subj, subjects) {
+            if _, ok := t.automateNames[subj]; !ok {
+                continue
+            }
+        }
+        policyToNames[ap] = append(policyToNames[ap], subj)
+    }
+
+    // Make one certmagic.Config for each group and call ManageAsync
+    for ap, names := range policyToNames {
+        err := ap.magic.ManageAsync(t.ctx.Context, names)
+        if err != nil {
+            return fmt.Errorf("automate: manage %v: %v", names, err)
+        }
+        for _, name := range names {
+            // Associate subject with issuer key
+            var issuerKey string
+            if len(ap.Issuers) == 1 {
+                if intIss, ok := ap.Issuers[0].(*InternalIssuer); ok && intIss != nil {
+                    issuerKey = intIss.IssuerKey()
+                }
+            }
+            t.managing[name] = issuerKey
+        }
+    }
+
+    return nil
+}
+```
+
+<Note>
+Certificates are obtained **asynchronously** after servers start. Your sites will be available immediately, with certificates obtained in the background.
+</Note>
+
+## ACME Challenges
+
+Caddy supports all ACME challenge types:
+
+### HTTP-01 Challenge
+
+Caddy automatically handles HTTP challenges:
+
+```go tls.go:667-713
+func (t *TLS) HandleHTTPChallenge(w http.ResponseWriter, r *http.Request) bool {
+    acmeChallenge := certmagic.LooksLikeHTTPChallenge(r)
+    zerosslValidation := certmagic.LooksLikeZeroSSLHTTPValidation(r)
+
+    if !acmeChallenge && !zerosslValidation {
+        return false
+    }
+
+    // Try all the issuers until we find the one that initiated the challenge
+    ap := t.getAutomationPolicyForName(r.Host)
+
+    if acmeChallenge {
+        type acmeCapable interface{ GetACMEIssuer() *ACMEIssuer }
+
+        for _, iss := range ap.magic.Issuers {
+            if acmeIssuer, ok := iss.(acmeCapable); ok {
+                if acmeIssuer.GetACMEIssuer().issuer.HandleHTTPChallenge(w, r) {
+                    return true
+                }
+            }
+        }
+
+        // It's possible another server in this process initiated the challenge
+        if challenge, ok := certmagic.GetACMEChallenge(r.Host); ok {
+            return certmagic.SolveHTTPChallenge(t.logger, w, r, challenge.Challenge)
+        }
+    }
+
+    return false
+}
+```
+
+### TLS-ALPN-01 Challenge
+
+Handled automatically during TLS handshake.
+
+### DNS-01 Challenge
+
+Requires DNS provider configuration:
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["*.example.com"],
+            "issuers": [
+              {
+                "module": "acme",
+                "challenges": {
+                  "dns": {
+                    "provider": {
+                      "name": "cloudflare",
+                      "api_token": "{env.CLOUDFLARE_API_TOKEN}"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+## Storage and Renewals
+
+Certificates are stored using Caddy's storage system and automatically renewed:
+
+```go tls.go:812-896
+func (t *TLS) keepStorageClean() {
+    t.storageCleanTicker = time.NewTicker(t.storageCleanInterval())
+    t.storageCleanStop = make(chan struct{})
+    go func() {
+        defer func() {
+            if err := recover(); err != nil {
+                log.Printf("[PANIC] storage cleaner: %v\n%s", err, debug.Stack())
+            }
+        }()
+        t.cleanStorageUnits()
+        for {
+            select {
+            case <-t.storageCleanStop:
+                return
+            case <-t.storageCleanTicker.C:
+                t.cleanStorageUnits()
+            }
+        }
+    }()
+}
+```
+
+<Info>
+By default, Caddy checks for renewals every 12 hours and renews certificates when they have 30 days or less remaining.
+</Info>
+
+## On-Demand TLS
+
+Caddy can obtain certificates on-demand during the TLS handshake:
+
+<Warning>
+**On-demand TLS should be protected** to prevent abuse. Always configure an `ask` endpoint or permission module.
+</Warning>
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "on_demand": {
+          "ask": "https://example.com/check-allowed"
+        },
+        "policies": [
+          {
+            "on_demand": true
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+## Disabling Automatic HTTPS
+
+Sometimes you need to disable automatic HTTPS:
+
+<Steps>
+  <Step title="Completely Disable">
+    ```caddyfile
+    example.com {
+        auto_https off
+    }
+    ```
+  </Step>
+
+  <Step title="Disable Redirects Only">
+    ```caddyfile
+    example.com {
+        auto_https disable_redirects
+    }
+    ```
+  </Step>
+
+  <Step title="Disable Certificates Only">
+    ```caddyfile
+    example.com {
+        auto_https disable_certs
+    }
+    ```
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use DNS Challenge for Wildcards">
+    DNS-01 is the only challenge type that supports wildcard certificates.
+  </Step>
+
+  <Step title="Configure On-Demand Protections">
+    Always use the `ask` endpoint or permission module with on-demand TLS.
+  </Step>
+
+  <Step title="Monitor Certificate Renewals">
+    Subscribe to TLS app events to track certificate lifecycle events.
+  </Step>
+
+  <Step title="Test in Staging First">
+    Use Let's Encrypt staging for testing to avoid rate limits:
+    
+    ```json
+    {
+      "issuers": [
+        {
+          "module": "acme",
+          "ca": "https://acme-staging-v02.api.letsencrypt.org/directory"
+        }
+      ]
+    }
+    ```
+  </Step>
+</Steps>

@@ -1,0 +1,158 @@
+---
+title: caddy start
+description: Start the Caddy server in the background and return immediately
+---
+
+The `caddy start` command starts the Caddy process in the background and returns immediately after the server starts running or fails to run.
+
+## Usage
+
+```bash
+caddy start [flags]
+```
+
+## Description
+
+Starts the Caddy process in the background, optionally bootstrapped with an initial config file. This command unblocks after the server starts running or fails to run, allowing you to continue using your terminal.
+
+<Warning>
+**Windows Note**: On Windows, the spawned child process will remain attached to the terminal, so closing the window will forcefully stop Caddy. To avoid this, consider using `caddy run` instead to keep it in the foreground.
+</Warning>
+
+## Flags
+
+<ParamField path="--config" type="string" default="">
+  Configuration file to load. Can be JSON or any format supported by an adapter.
+  
+  If not specified, Caddy will start without a config (admin API only).
+</ParamField>
+
+<ParamField path="--adapter" type="string" default="">
+  Name of config adapter to apply. Required if the config file is not in JSON format.
+  
+  Common adapters:
+  - `caddyfile` - Caddyfile format
+  - `yaml` - YAML format (if adapter is installed)
+</ParamField>
+
+<ParamField path="--envfile" type="string[]" default="[]">
+  Environment file(s) to load in KEY=VALUE format. Can be specified multiple times.
+  
+  Variables from the envfile will not overwrite existing environment variables.
+</ParamField>
+
+<ParamField path="--watch" type="boolean" default="false">
+  Reload changed config file automatically.
+  
+  <Warning>
+  Only use this in development environments as it can make unintentional config changes easier.
+  </Warning>
+</ParamField>
+
+<ParamField path="--pidfile" type="string" default="">
+  Path of file to which to write the process ID.
+  
+  Useful for process management, monitoring, and stopping the server later.
+</ParamField>
+
+## Examples
+
+### Start with default Caddyfile
+
+```bash
+caddy start
+```
+
+Starts Caddy in the background. If a `Caddyfile` exists in the current directory, it will be used.
+
+### Start with a specific config
+
+```bash
+caddy start --config /etc/caddy/Caddyfile
+```
+
+### Start with PID file
+
+```bash
+caddy start --config Caddyfile --pidfile /var/run/caddy.pid
+```
+
+The PID file can later be used to stop the process:
+
+```bash
+kill $(cat /var/run/caddy.pid)
+```
+
+### Start with environment file
+
+```bash
+caddy start --config Caddyfile --envfile .env.production
+```
+
+### Start with auto-reload
+
+<Warning>
+Only for development!
+</Warning>
+
+```bash
+caddy start --config Caddyfile --watch
+```
+
+### Start with multiple environment files
+
+```bash
+caddy start --config Caddyfile --envfile .env --envfile .env.local
+```
+
+Later files take precedence over earlier ones.
+
+## Output
+
+When successful, the command outputs:
+
+```
+Successfully started Caddy (pid=12345) - Caddy is running in the background
+```
+
+The process ID (PID) is displayed so you can manage the process if needed.
+
+## Exit Codes
+
+- `0` - Success (Caddy started successfully)
+- `1` - Failed startup (Caddy failed to start)
+
+## How It Works
+
+The `caddy start` command:
+
+1. Opens a TCP listener on 127.0.0.1 for success confirmation
+2. Generates random confirmation bytes
+3. Spawns a child process with `caddy run` and the `--pingback` flag
+4. Passes the confirmation bytes to the child via stdin
+5. Waits for either:
+   - The child to connect back and echo the confirmation bytes (success)
+   - The child process to exit with an error (failure)
+6. Returns based on the outcome
+
+This mechanism ensures that `caddy start` only returns success when the server is actually running, not just when the process starts.
+
+## Stopping the Server
+
+To stop a server started with `caddy start`, use:
+
+```bash
+caddy stop
+```
+
+Or, if you created a PID file:
+
+```bash
+kill $(cat /path/to/caddy.pid)
+```
+
+## Related Commands
+
+- [`caddy run`](/cli/run) - Start Caddy in the foreground
+- [`caddy stop`](/cli/stop) - Stop a running Caddy instance
+- [`caddy reload`](/cli/reload) - Reload the configuration

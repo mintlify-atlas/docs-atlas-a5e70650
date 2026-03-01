@@ -1,0 +1,640 @@
+---
+title: 'Installation Guide'
+description: 'Complete installation instructions for Caddy web server across all platforms including Linux, macOS, Windows, and Docker'
+---
+
+# Installing Caddy
+
+Caddy is distributed as a single binary with no dependencies. This guide covers all installation methods across different platforms.
+
+<Note>
+See [our online documentation](https://caddyserver.com/docs/install) for the most up-to-date installation instructions.
+</Note>
+
+## Quick Install
+
+The simplest, cross-platform way to get started:
+
+<Steps>
+  <Step title="Download from GitHub">
+    Download Caddy from [GitHub Releases](https://github.com/caddyserver/caddy/releases) and place the executable file in your PATH.
+  </Step>
+  
+  <Step title="Verify Installation">
+    ```bash
+    caddy version
+    ```
+  </Step>
+</Steps>
+
+## Platform-Specific Installation
+
+<Tabs>
+  <Tab title="Linux">
+    ### Debian/Ubuntu/Raspbian
+    
+    Using the official Cloudsmith repository:
+    
+    ```bash
+    sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+    sudo apt update
+    sudo apt install caddy
+    ```
+    
+    ### Fedora/RHEL/CentOS
+    
+    ```bash
+    dnf install 'dnf-command(copr)'
+    dnf copr enable @caddy/caddy
+    dnf install caddy
+    ```
+    
+    ### Arch Linux
+    
+    ```bash
+    pacman -S caddy
+    ```
+    
+    ### Manual Installation (Any Linux)
+    
+    ```bash
+    # Download latest version
+    curl -O https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_amd64.tar.gz
+    
+    # Extract
+    tar -xzf caddy_linux_amd64.tar.gz
+    
+    # Move to PATH
+    sudo mv caddy /usr/local/bin/
+    
+    # Set permissions for binding to low ports
+    sudo setcap cap_net_bind_service=+ep /usr/local/bin/caddy
+    ```
+    
+    <Warning>
+    On Linux, Caddy needs special permissions to bind to ports 80 and 443. Use `setcap` as shown above.
+    </Warning>
+  </Tab>
+  
+  <Tab title="macOS">
+    ### Homebrew (Recommended)
+    
+    ```bash
+    brew install caddy
+    ```
+    
+    ### Manual Installation
+    
+    ```bash
+    # Download for macOS
+    curl -O https://github.com/caddyserver/caddy/releases/latest/download/caddy_darwin_amd64.tar.gz
+    
+    # For Apple Silicon (M1/M2)
+    curl -O https://github.com/caddyserver/caddy/releases/latest/download/caddy_darwin_arm64.tar.gz
+    
+    # Extract
+    tar -xzf caddy_darwin_*.tar.gz
+    
+    # Move to PATH
+    sudo mv caddy /usr/local/bin/
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    ### Manual Installation
+    
+    1. Download the Windows binary from [GitHub Releases](https://github.com/caddyserver/caddy/releases)
+    2. Extract the ZIP file
+    3. Move `caddy.exe` to a directory in your PATH (e.g., `C:\Windows\System32`)
+    
+    ### Using PowerShell
+    
+    ```powershell
+    # Download
+    Invoke-WebRequest -Uri "https://github.com/caddyserver/caddy/releases/latest/download/caddy_windows_amd64.zip" -OutFile "caddy.zip"
+    
+    # Extract
+    Expand-Archive caddy.zip -DestinationPath .
+    
+    # Move to PATH (requires admin)
+    Move-Item .\caddy.exe C:\Windows\System32\
+    ```
+    
+    <Note>
+    On Windows, you may need to run your terminal as Administrator to bind to ports 80 and 443.
+    </Note>
+  </Tab>
+  
+  <Tab title="Docker">
+    ### Official Docker Image
+    
+    ```bash
+    docker pull caddy:latest
+    ```
+    
+    ### Run with Caddyfile
+    
+    ```bash
+    docker run -d -p 80:80 -p 443:443 \
+      -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
+      -v $PWD/site:/srv \
+      -v caddy_data:/data \
+      -v caddy_config:/config \
+      caddy:latest
+    ```
+    
+    ### Docker Compose
+    
+    ```yaml docker-compose.yml
+    version: "3.7"
+    
+    services:
+      caddy:
+        image: caddy:latest
+        restart: unless-stopped
+        ports:
+          - "80:80"
+          - "443:443"
+          - "443:443/udp"  # HTTP/3
+        volumes:
+          - ./Caddyfile:/etc/caddy/Caddyfile
+          - ./site:/srv
+          - caddy_data:/data
+          - caddy_config:/config
+    
+    volumes:
+      caddy_data:
+      caddy_config:
+    ```
+    
+    <Note>
+    The Docker image includes common modules and is ready for production use.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Building from Source
+
+Building from source gives you the latest features and allows for customization.
+
+### Requirements
+
+- [Go 1.25.0 or newer](https://golang.org/dl/)
+
+### For Development
+
+<Warning>
+These steps will not embed proper version information. For production builds, use the method in the next section.
+</Warning>
+
+```bash
+# Clone the repository
+git clone "https://github.com/caddyserver/caddy.git"
+cd caddy/cmd/caddy/
+
+# Build
+go build
+```
+
+### Setting Capabilities (Linux)
+
+After building, grant permission to bind to low ports:
+
+```bash
+sudo setcap cap_net_bind_service=+ep ./caddy
+```
+
+### Using `go run` (Development)
+
+You can still use `go run` with `setcap`:
+
+```bash
+go run -exec ./setcap.sh main.go
+```
+
+<Note>
+To avoid typing your password for `setcap`, you can configure sudoers to allow passwordless execution of `/usr/sbin/setcap` for your user. See the README for details.
+</Note>
+
+### Running Tests
+
+```bash
+# All modules
+go test ./...
+
+# Specific module
+go test ./modules/caddyhttp/tracing/
+```
+
+## Building with Version Information and Plugins
+
+For production builds with proper version info and custom plugins, use `xcaddy`.
+
+### Using xcaddy
+
+[xcaddy](https://github.com/caddyserver/xcaddy) is Caddy's official builder tool.
+
+<Steps>
+  <Step title="Install xcaddy">
+    ```bash
+    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+    ```
+  </Step>
+  
+  <Step title="Build Caddy">
+    ```bash
+    xcaddy build
+    ```
+    
+    This creates a `caddy` binary in the current directory with proper version information.
+  </Step>
+  
+  <Step title="Build with Plugins">
+    Add custom plugins:
+    
+    ```bash
+    xcaddy build \
+      --with github.com/caddyserver/transform-encoder \
+      --with github.com/caddyserver/nginx-adapter
+    ```
+  </Step>
+  
+  <Step title="Build Specific Version">
+    Pin to a specific Caddy version:
+    
+    ```bash
+    xcaddy build v2.7.0 \
+      --with github.com/caddyserver/transform-encoder
+    ```
+  </Step>
+</Steps>
+
+### What xcaddy Does
+
+The `xcaddy build` command automates these steps:
+
+1. Create a new folder: `mkdir caddy`
+2. Change into it: `cd caddy`
+3. Copy [Caddy's main.go](https://github.com/caddyserver/caddy/blob/master/cmd/caddy/main.go) and add imports for custom plugins
+4. Initialize a Go module: `go mod init caddy`
+5. (Optional) Pin Caddy version: `go get github.com/caddyserver/caddy/v2@version`
+6. (Optional) Add plugins by adding their import: `_ "import/path/here"`
+7. Compile: `go build -tags=nobadger,nomysql,nopgx`
+
+<CodeGroup>
+```go main.go Structure
+// Example of what xcaddy creates
+package main
+
+import (
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
+
+	// Standard Caddy modules
+	_ "github.com/caddyserver/caddy/v2/modules/standard"
+	
+	// Custom plugins
+	_ "github.com/caddyserver/transform-encoder"
+	_ "github.com/caddyserver/nginx-adapter"
+)
+
+func main() {
+	caddycmd.Main()
+}
+```
+
+```bash Build Tags
+# Build without optional dependencies
+go build -tags=nobadger,nomysql,nopgx
+
+# These tags exclude:
+# - nobadger: BadgerDB storage
+# - nomysql: MySQL storage  
+# - nopgx: PostgreSQL storage
+```
+</CodeGroup>
+
+## System Service Setup
+
+### Linux (systemd)
+
+Create a systemd service for Caddy:
+
+```bash
+sudo caddy install
+```
+
+This creates and enables a systemd service. Then:
+
+```bash
+# Start Caddy
+sudo systemctl start caddy
+
+# Enable on boot
+sudo systemctl enable caddy
+
+# Check status
+sudo systemctl status caddy
+
+# View logs
+journalctl -u caddy --no-pager | less
+```
+
+### macOS (launchd)
+
+Create a launch agent at `~/Library/LaunchAgents/com.caddy.server.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.caddy.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/caddy</string>
+        <string>run</string>
+        <string>--config</string>
+        <string>/path/to/Caddyfile</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+
+Then:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.caddy.server.plist
+```
+
+### Windows Service
+
+Use the built-in service management:
+
+```powershell
+# Install as service
+caddy run --config C:\path\to\Caddyfile
+
+# Or use NSSM (Non-Sucking Service Manager)
+nssm install Caddy C:\path\to\caddy.exe
+nssm set Caddy AppDirectory C:\path\to\config
+nssm set Caddy AppParameters run
+```
+
+## Configuration Locations
+
+Caddy stores data in platform-specific locations:
+
+<Tabs>
+  <Tab title="Linux">
+    - **Config**: `$XDG_CONFIG_HOME/caddy/` or `~/.config/caddy/`
+    - **Data**: `$XDG_DATA_HOME/caddy/` or `~/.local/share/caddy/`
+    - **Certificates**: `~/.local/share/caddy/certificates/`
+  </Tab>
+  
+  <Tab title="macOS">
+    - **Config**: `~/Library/Application Support/Caddy/`
+    - **Data**: `~/Library/Application Support/Caddy/`
+    - **Certificates**: `~/Library/Application Support/Caddy/certificates/`
+  </Tab>
+  
+  <Tab title="Windows">
+    - **Config**: `%AppData%\Caddy\`
+    - **Data**: `%AppData%\Caddy\`
+    - **Certificates**: `%AppData%\Caddy\certificates\`
+  </Tab>
+  
+  <Tab title="Docker">
+    - **Config**: `/config/`
+    - **Data**: `/data/`
+    - **Certificates**: `/data/caddy/certificates/`
+    
+    Mount volumes to persist these directories.
+  </Tab>
+</Tabs>
+
+## Environment Variables
+
+Caddy respects several environment variables:
+
+```bash
+# Custom config directory
+export XDG_CONFIG_HOME=/custom/config
+
+# Custom data directory  
+export XDG_DATA_HOME=/custom/data
+
+# Custom User-Agent for ACME requests
+export USERAGENT="MyApp/1.0"
+```
+
+View all environment info:
+
+```bash
+caddy environ
+```
+
+Example output:
+
+```plaintext
+caddy.HomeDir=/home/user
+caddy.AppDataDir=/home/user/.local/share/caddy
+caddy.AppConfigDir=/home/user/.config/caddy
+caddy.ConfigAutosavePath=/home/user/.config/caddy/autosave.json
+caddy.Version=v2.7.0
+runtime.GOOS=linux
+runtime.GOARCH=amd64
+runtime.Compiler=gc
+runtime.NumCPU=8
+runtime.GOMAXPROCS=8
+runtime.Version=go1.25.0
+```
+
+## Verifying Installation
+
+<Steps>
+  <Step title="Check Version">
+    ```bash
+    caddy version
+    ```
+  </Step>
+  
+  <Step title="List Modules">
+    ```bash
+    caddy list-modules
+    ```
+    
+    This shows all available modules including any plugins you've added.
+  </Step>
+  
+  <Step title="Test Configuration">
+    ```bash
+    caddy validate --config /path/to/Caddyfile
+    ```
+  </Step>
+  
+  <Step title="Run a Test Server">
+    ```bash
+    caddy file-server --browse --listen :2015
+    ```
+    
+    Visit `http://localhost:2015` to confirm Caddy is working.
+  </Step>
+</Steps>
+
+## Updating Caddy
+
+<Tabs>
+  <Tab title="Package Manager">
+    ```bash
+    # Debian/Ubuntu
+    sudo apt update && sudo apt upgrade caddy
+    
+    # Fedora
+    sudo dnf upgrade caddy
+    
+    # macOS
+    brew upgrade caddy
+    
+    # Arch
+    sudo pacman -Syu caddy
+    ```
+  </Tab>
+  
+  <Tab title="Manual Update">
+    1. Download the latest release
+    2. Stop Caddy: `sudo systemctl stop caddy`
+    3. Replace the binary
+    4. Start Caddy: `sudo systemctl start caddy`
+  </Tab>
+  
+  <Tab title="Docker">
+    ```bash
+    docker pull caddy:latest
+    docker-compose down
+    docker-compose up -d
+    ```
+  </Tab>
+  
+  <Tab title="xcaddy Rebuild">
+    ```bash
+    xcaddy build --with github.com/caddyserver/transform-encoder
+    sudo systemctl stop caddy
+    sudo mv caddy /usr/local/bin/
+    sudo systemctl start caddy
+    ```
+  </Tab>
+</Tabs>
+
+## Uninstalling Caddy
+
+<Tabs>
+  <Tab title="Debian/Ubuntu">
+    ```bash
+    sudo systemctl stop caddy
+    sudo systemctl disable caddy
+    sudo apt remove caddy
+    ```
+  </Tab>
+  
+  <Tab title="Fedora/RHEL">
+    ```bash
+    sudo systemctl stop caddy
+    sudo systemctl disable caddy
+    sudo dnf remove caddy
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    ```bash
+    # If installed via Homebrew
+    brew uninstall caddy
+    
+    # If using launchd
+    launchctl unload ~/Library/LaunchAgents/com.caddy.server.plist
+    rm ~/Library/LaunchAgents/com.caddy.server.plist
+    
+    # Remove binary
+    sudo rm /usr/local/bin/caddy
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    ```powershell
+    # Stop service if running
+    nssm stop Caddy
+    nssm remove Caddy
+    
+    # Remove binary
+    Remove-Item C:\Windows\System32\caddy.exe
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Uninstalling Caddy does not remove configuration files or certificates. To completely remove all Caddy data, also delete the config and data directories.
+</Warning>
+
+## Troubleshooting Installation
+
+### Permission Issues (Linux)
+
+```bash
+# Grant permission to bind to low ports
+sudo setcap cap_net_bind_service=+ep $(which caddy)
+
+# Verify
+getcap $(which caddy)
+# Should output: /usr/local/bin/caddy = cap_net_bind_service+ep
+```
+
+### PATH Issues
+
+If `caddy` command is not found:
+
+```bash
+# Check where Caddy is installed
+which caddy
+
+# Add to PATH temporarily
+export PATH=$PATH:/usr/local/bin
+
+# Add to PATH permanently (add to ~/.bashrc or ~/.zshrc)
+echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Version Mismatch
+
+If you have multiple Caddy installations:
+
+```bash
+# Find all Caddy binaries
+which -a caddy
+
+# Or
+find /usr -name caddy 2>/dev/null
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get your first site running with Caddy
+  </Card>
+  <Card title="Caddyfile Tutorial" icon="book" href="https://caddyserver.com/docs/caddyfile/tutorial">
+    Learn Caddy's configuration syntax
+  </Card>
+  <Card title="Automatic HTTPS" icon="shield-check" href="https://caddyserver.com/docs/automatic-https">
+    Understand how automatic HTTPS works
+  </Card>
+  <Card title="Community Forum" icon="comments" href="https://caddy.community">
+    Get help from the community
+  </Card>
+</CardGroup>

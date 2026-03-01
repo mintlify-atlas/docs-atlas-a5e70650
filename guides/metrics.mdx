@@ -1,0 +1,410 @@
+---
+title: Metrics and Monitoring  
+description: Expose Prometheus metrics from Caddy for monitoring performance, uptime, and operational health
+---
+
+# Metrics and Monitoring
+
+Caddy exposes Prometheus metrics for monitoring server health, performance, and operational statistics. Metrics are available through both the admin API and a configurable handler.
+
+## Admin Metrics Endpoint
+
+By default, metrics are available on the admin endpoint:
+
+```bash
+curl http://localhost:2019/metrics
+```
+
+<Note>
+  The admin metrics endpoint is enabled by default and requires no configuration.
+</Note>
+
+## Metrics Handler
+
+Expose metrics on a public endpoint:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "routes": [
+            {
+              "match": [{"path": ["/metrics"]}],
+              "handle": [
+                {
+                  "handler": "metrics",
+                  "disable_openmetrics": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+metrics.example.com {
+    metrics /metrics
+}
+
+# Or with path
+example.com {
+    route /metrics {
+        metrics
+    }
+}
+```
+</CodeGroup>
+
+### Disable OpenMetrics
+
+If your monitoring system doesn't support OpenMetrics format:
+
+```caddyfile
+metrics /metrics {
+    disable_openmetrics
+}
+```
+
+## Available Metrics
+
+### HTTP Metrics
+
+**Request Count**
+```
+caddy_http_request_count_total{handler="reverse_proxy",server="srv0"}
+```
+
+**Request Duration**
+```
+caddy_http_request_duration_seconds{handler="file_server",server="srv0"}
+```
+
+**Request Size**
+```
+caddy_http_request_size_bytes{handler="reverse_proxy",server="srv0"}
+```
+
+**Response Size**
+```
+caddy_http_response_size_bytes{handler="reverse_proxy",server="srv0"}
+```
+
+**Requests In Flight**
+```
+caddy_http_requests_in_flight{server="srv0"}
+```
+
+### Reverse Proxy Metrics
+
+**Upstream Request Count**
+```
+caddy_reverse_proxy_upstreams_request_count_total{upstream="10.0.0.1:8080"}
+```
+
+**Upstream Healthy**
+```
+caddy_reverse_proxy_upstreams_healthy{upstream="10.0.0.1:8080"}
+```
+
+**Upstream Request Duration**
+```
+caddy_reverse_proxy_upstreams_request_duration_seconds{upstream="10.0.0.1:8080"}
+```
+
+### TLS Metrics
+
+**Handshakes Total**
+```
+caddy_tls_handshakes_total{conn_policy="0"}
+```
+
+**Client Certificates**
+```
+caddy_tls_client_cert_count{conn_policy="0"}
+```
+
+### Admin API Metrics
+
+**Request Count**
+```
+caddy_admin_http_requests_total{handler="config",path="/config/"}
+```
+
+**Request Errors**
+```
+caddy_admin_http_request_errors_total{handler="config",method="POST",path="/config/"}
+```
+
+## Prometheus Configuration
+
+Configure Prometheus to scrape Caddy metrics:
+
+```yaml prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'caddy'
+    static_configs:
+      - targets: ['localhost:2019']
+    metrics_path: /metrics
+    
+  # Or from public endpoint
+  - job_name: 'caddy-public'
+    static_configs:
+      - targets: ['metrics.example.com:443']
+    scheme: https
+    metrics_path: /metrics
+```
+
+## Grafana Dashboard
+
+Example Grafana queries:
+
+### Request Rate
+```promql
+rate(caddy_http_request_count_total[5m])
+```
+
+### Error Rate
+```promql
+sum(rate(caddy_http_request_count_total{status=~"5.."}[5m]))
+```
+
+### Response Time (95th percentile)
+```promql
+histogram_quantile(0.95, 
+  rate(caddy_http_request_duration_seconds_bucket[5m])
+)
+```
+
+### Upstream Health
+```promql
+caddy_reverse_proxy_upstreams_healthy
+```
+
+## Securing Metrics
+
+Protect your metrics endpoint:
+
+<CodeGroup>
+```caddyfile Basic Auth
+metrics.example.com {
+    basicauth /metrics {
+        admin $2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG
+    }
+    
+    metrics /metrics
+}
+```
+
+```caddyfile IP Whitelist
+metrics.example.com {
+    @allowed {
+        path /metrics
+        remote_ip 10.0.0.0/8 172.16.0.0/12
+    }
+    
+    handle @allowed {
+        metrics
+    }
+    
+    handle {
+        respond 403
+    }
+}
+```
+
+```caddyfile mTLS
+metrics.example.com {
+    tls {
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /path/to/ca.pem
+        }
+    }
+    
+    metrics /metrics
+}
+```
+</CodeGroup>
+
+## Alert Rules
+
+Example Prometheus alert rules:
+
+```yaml
+groups:
+  - name: caddy
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: CaddyHighErrorRate
+        expr: |
+          rate(caddy_http_request_count_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate on {{ $labels.server }}"
+          
+      # Upstream down
+      - alert: CaddyUpstreamDown
+        expr: caddy_reverse_proxy_upstreams_healthy == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Upstream {{ $labels.upstream }} is down"
+          
+      # High response time
+      - alert: CaddyHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(caddy_http_request_duration_seconds_bucket[5m])
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response latency on {{ $labels.server }}"
+          
+      # Certificate expiring
+      - alert: CaddyCertificateExpiringSoon
+        expr: |
+          (caddy_tls_certificate_not_after_timestamp - time()) / 86400 < 7
+        labels:
+          severity: warning
+        annotations:
+          summary: "Certificate {{ $labels.subject }} expires in less than 7 days"
+```
+
+## Custom Metrics
+
+Register custom metrics in Caddy modules:
+
+```go
+import (
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/caddyserver/caddy/v2"
+)
+
+var myCounter = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+        Namespace: "caddy",
+        Subsystem: "mymodule",
+        Name:      "operations_total",
+        Help:      "Total number of operations",
+    },
+    []string{"type"},
+)
+
+func init() {
+    caddy.RegisterModule(MyModule{})
+}
+
+func (m *MyModule) Provision(ctx caddy.Context) error {
+    registry := ctx.GetMetricsRegistry()
+    if registry != nil {
+        registry.MustRegister(myCounter)
+    }
+    return nil
+}
+```
+
+## Complete Example
+
+```caddyfile
+{
+    # Enable metrics on admin endpoint (default)
+    admin localhost:2019
+}
+
+# Public metrics endpoint with authentication
+metrics.internal.example.com {
+    # Restrict to internal network
+    @metrics {
+        path /metrics
+        remote_ip 10.0.0.0/8
+    }
+    
+    handle @metrics {
+        metrics {
+            disable_openmetrics false
+        }
+    }
+    
+    handle {
+        respond 404
+    }
+    
+    # Optional: Add authentication
+    basicauth {
+        prometheus $2a$14$...
+    }
+}
+
+# Main application with instrumentation
+app.example.com {
+    # All requests are automatically instrumented
+    reverse_proxy backend:8080 {
+        # Health checks also generate metrics
+        health_uri /health
+        health_interval 30s
+    }
+    
+    # Log for correlation with metrics
+    log {
+        output file /var/log/caddy/app.log
+        format json
+    }
+}
+```
+
+## Monitoring Stack
+
+Typical monitoring setup:
+
+<Steps>
+
+### Setup Process
+
+1. **Configure Caddy** - Enable metrics handler
+2. **Deploy Prometheus** - Scrape Caddy metrics
+3. **Setup Grafana** - Visualize metrics
+4. **Create alerts** - Notify on issues
+5. **Monitor dashboards** - Track performance
+
+</Steps>
+
+## Performance Impact
+
+<Note>
+  Metrics collection has minimal performance overhead. Caddy uses efficient Prometheus client libraries with lock-free operations where possible.
+</Note>
+
+## Best Practices
+
+<Steps>
+
+### Metrics Guidelines
+
+1. **Secure metrics endpoints** - Use authentication or IP whitelisting
+2. **Set reasonable scrape intervals** - 15-30 seconds is typical
+3. **Monitor cardinality** - Avoid high-cardinality labels
+4. **Create meaningful alerts** - Focus on actionable issues
+5. **Dashboard organization** - Group related metrics together
+6. **Retention policy** - Balance storage cost vs. historical data needs
+
+</Steps>
+
+<Tip>
+  Combine metrics with structured logging for complete observability. Use correlation IDs to trace requests across both systems.
+</Tip>

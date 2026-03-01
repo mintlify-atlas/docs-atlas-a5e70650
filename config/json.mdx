@@ -1,0 +1,671 @@
+---
+title: JSON Configuration
+description: Caddy's native JSON configuration format with complete control over all features
+---
+
+JSON is Caddy's native configuration format. While the Caddyfile is more human-friendly, JSON provides complete control over Caddy's configuration with explicit structure and validation.
+
+## Overview
+
+Every configuration in Caddy is ultimately JSON. When you use a Caddyfile, it's converted (adapted) to JSON before being used. The JSON format is expressed natively as a Go struct and can be manipulated through Caddy's admin API.
+
+<Note>
+Caddy config is expressed natively as a JSON document. If you prefer not to work with JSON directly, there are many config adapters available that can convert various inputs into Caddy JSON.
+</Note>
+
+## Root Config Structure
+
+From `caddy.go:46-95`, the top-level configuration structure:
+
+```go
+type Config struct {
+    Admin   *AdminConfig `json:"admin,omitempty"`
+    Logging *Logging     `json:"logging,omitempty"`
+    
+    // StorageRaw is a storage module that defines how/where Caddy
+    // stores assets (such as TLS certificates).
+    StorageRaw json.RawMessage `json:"storage,omitempty" caddy:"namespace=caddy.storage inline_key=module"`
+    
+    // AppsRaw are the apps that Caddy will load and run.
+    AppsRaw ModuleMap `json:"apps,omitempty" caddy:"namespace="`
+}
+```
+
+<CodeGroup>
+
+```json Minimal Config
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":80"],
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "static_response",
+                  "body": "Hello, World!"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+```json Full Structure
+{
+  "admin": {
+    "listen": "localhost:2019",
+    "enforce_origin": false,
+    "origins": []
+  },
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "INFO",
+        "encoder": {
+          "format": "console"
+        }
+      }
+    }
+  },
+  "storage": {
+    "module": "file_system",
+    "root": "/var/lib/caddy"
+  },
+  "apps": {
+    "http": {},
+    "tls": {}
+  }
+}
+```
+
+</CodeGroup>
+
+## Top-Level Fields
+
+### Admin
+
+Configures Caddy's API endpoint from `admin.go:67-125`:
+
+```go
+type AdminConfig struct {
+    // If true, the admin endpoint will be completely disabled.
+    Disabled bool `json:"disabled,omitempty"`
+    
+    // The address to which the admin endpoint's listener should
+    // bind itself. Default: localhost:2019
+    Listen string `json:"listen,omitempty"`
+    
+    // If true, CORS headers will be emitted
+    EnforceOrigin bool `json:"enforce_origin,omitempty"`
+    
+    // The list of allowed origins/hosts for API requests
+    Origins []string `json:"origins,omitempty"`
+    
+    // Options pertaining to configuration management
+    Config *ConfigSettings `json:"config,omitempty"`
+    
+    // Identity and remote administration
+    Identity *IdentityConfig `json:"identity,omitempty"`
+    Remote   *RemoteAdmin    `json:"remote,omitempty"`
+}
+```
+
+<Tabs>
+  <Tab title="Default Admin">
+    ```json
+    {
+      "admin": {
+        "listen": "localhost:2019"
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Disabled Admin">
+    ```json
+    {
+      "admin": {
+        "disabled": true
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Custom Address">
+    ```json
+    {
+      "admin": {
+        "listen": "0.0.0.0:2020",
+        "enforce_origin": true,
+        "origins": [
+          "https://admin.example.com"
+        ]
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Disabling the admin endpoint makes runtime config changes impossible. Use with caution in production.
+</Warning>
+
+### Logging
+
+From `logging.go:41-81`, logging configuration:
+
+```go
+type Logging struct {
+    // Sink is the destination for all unstructured logs emitted
+    // from Go's standard library logger
+    Sink *SinkLog `json:"sink,omitempty"`
+    
+    // Logs are your logs, keyed by an arbitrary name.
+    // The default log can be customized by defining
+    // a log called "default"
+    Logs map[string]*CustomLog `json:"logs,omitempty"`
+}
+```
+
+<CodeGroup>
+
+```json Console Logging
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "INFO",
+        "encoder": {
+          "format": "console"
+        },
+        "writer": {
+          "output": "stdout"
+        }
+      }
+    }
+  }
+}
+```
+
+```json File Logging
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "DEBUG",
+        "encoder": {
+          "format": "json"
+        },
+        "writer": {
+          "output": "file",
+          "filename": "/var/log/caddy/access.log"
+        }
+      }
+    }
+  }
+}
+```
+
+```json Multiple Logs
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "INFO"
+      },
+      "access": {
+        "level": "INFO",
+        "writer": {
+          "output": "file",
+          "filename": "./access.log"
+        },
+        "include": ["http.log.access"]
+      },
+      "errors": {
+        "level": "ERROR",
+        "writer": {
+          "output": "file",
+          "filename": "./error.log"
+        }
+      }
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+### Storage
+
+Defines where Caddy stores TLS certificates and other assets:
+
+```json
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/var/lib/caddy"
+  }
+}
+```
+
+<Note>
+The default storage module is `file_system` with a platform-specific default path. On Linux, this is typically `$HOME/.local/share/caddy` or `/var/lib/caddy`.
+</Note>
+
+### Apps
+
+Apps are the modules that Caddy runs. The app module name is the key:
+
+```json
+{
+  "apps": {
+    "http": { /* HTTP app config */ },
+    "tls": { /* TLS app config */ },
+    "pki": { /* PKI app config */ }
+  }
+}
+```
+
+## Module System
+
+Caddy uses a modular architecture. From the source documentation:
+
+> Fields which have a `json.RawMessage` type and which appear as dots (•••) in the online docs can be fulfilled by modules in a certain module namespace.
+
+Modules are specified in two ways:
+
+### Inline Key
+
+```json
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/var/lib/caddy"
+  }
+}
+```
+
+### Module Map
+
+```json
+{
+  "apps": {
+    "http": { /* ... */ },
+    "tls": { /* ... */ }
+  }
+}
+```
+
+## Duration Values
+
+From `caddy.go:855-906`, durations can be integers (nanoseconds) or strings:
+
+```go
+type Duration time.Duration
+
+// Valid units are `ns`, `us`/`µs`, `ms`, `s`, `m`, `h`, and `d`
+```
+
+<Tabs>
+  <Tab title="String Format">
+    ```json
+    {
+      "timeout": "30s",
+      "interval": "1.5h",
+      "grace_period": "2h45m"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Integer (nanoseconds)">
+    ```json
+    {
+      "timeout": 30000000000
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Days Support">
+    ```json
+    {
+      "retention": "7d",
+      "cache_ttl": "1.5d"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Working with JSON Configs
+
+### Loading Configuration
+
+From `caddy.go:104-143`, load configuration via the API or programmatically:
+
+```go
+func Load(cfgJSON []byte, forceReload bool) error
+```
+
+```bash
+# Via API
+curl -X POST http://localhost:2019/load \
+  -H "Content-Type: application/json" \
+  -d @config.json
+
+# Via CLI
+caddy run --config config.json
+```
+
+### Validating Configuration
+
+From `caddy.go:735-743`:
+
+```go
+func Validate(cfg *Config) error {
+    _, err := run(cfg, false)
+    if err == nil {
+        cfg.cancelFunc() // call Cleanup on all modules
+    }
+    return err
+}
+```
+
+```bash
+caddy validate --config config.json
+```
+
+### Adapting from Caddyfile
+
+Convert Caddyfile to JSON (`caddyconfig/caddyfile/adapter.go:31-64`):
+
+```bash
+# Convert to JSON
+caddy adapt --config Caddyfile
+
+# Validate during adaptation
+caddy adapt --config Caddyfile --validate
+
+# Output to file
+caddy adapt --config Caddyfile > config.json
+```
+
+## HTTP App Configuration
+
+The HTTP app is the most commonly used:
+
+```json
+{
+  "apps": {
+    "http": {
+      "http_port": 80,
+      "https_port": 443,
+      "grace_period": "10s",
+      "servers": {
+        "srv0": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": ["example.com"]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {"dial": "localhost:8080"}
+                  ]
+                }
+              ]
+            }
+          ],
+          "automatic_https": {
+            "disable": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+## TLS Configuration
+
+```json
+{
+  "apps": {
+    "tls": {
+      "certificates": {
+        "automate": ["example.com"]
+      },
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["example.com", "*.example.com"],
+            "issuers": [
+              {
+                "module": "acme",
+                "ca": "https://acme-v02.api.letsencrypt.org/directory",
+                "email": "admin@example.com"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+## Reverse Proxy Example
+
+Complete reverse proxy configuration:
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":8884"],
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {"dial": "127.0.0.1:8080"}
+                  ],
+                  "transport": {
+                    "protocol": "http",
+                    "network_proxy": {
+                      "from": "url",
+                      "url": "http://localhost:8080"
+                    }
+                  },
+                  "health_checks": {
+                    "active": {
+                      "interval": "30s",
+                      "timeout": "5s",
+                      "path": "/health"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+## Configuration Management
+
+### Auto-Save
+
+From `caddy.go:362-384`, Caddy can persist configurations:
+
+```json
+{
+  "admin": {
+    "config": {
+      "persist": true
+    }
+  }
+}
+```
+
+<Note>
+When enabled, Caddy automatically saves the active config to disk at `$XDG_CONFIG_HOME/caddy/autosave.json`. Load it on restart with `caddy run --resume`.
+</Note>
+
+### Dynamic Config Loading
+
+From `admin.go:127-150`, load config from external sources:
+
+```json
+{
+  "admin": {
+    "config": {
+      "load": {
+        "module": "http",
+        "url": "https://config-server.example.com/config.json"
+      },
+      "load_delay": "30s"
+    }
+  }
+}
+```
+
+<Warning>
+A delay (`load_delay`) is required if dynamically-loaded configs also load other configs, to prevent tight loops.
+</Warning>
+
+## API Operations
+
+### GET Current Config
+
+```bash
+curl http://localhost:2019/config/
+```
+
+### POST New Config
+
+```bash
+curl -X POST http://localhost:2019/load \
+  -H "Content-Type: application/json" \
+  -d @new-config.json
+```
+
+### PATCH Partial Update
+
+```bash
+curl -X PATCH http://localhost:2019/config/apps/http/servers/srv0/listen \
+  -H "Content-Type: application/json" \
+  -d '[":80", ":443"]'
+```
+
+### DELETE Config Path
+
+```bash
+curl -X DELETE http://localhost:2019/config/apps/http/servers/srv1
+```
+
+## Best Practices
+
+<Note>
+**Convention**: All config settings are optional. Caddy provides good, documented default values. Required parameters are clearly documented.
+</Note>
+
+1. **Validate before deploying**: Use `caddy validate` to check configs
+2. **Start minimal**: Begin with basic config and add complexity as needed
+3. **Use modules**: Leverage Caddy's module system for extensibility
+4. **Version control**: Keep JSON configs in git for change tracking
+5. **Document modules**: Add comments in a separate doc file (JSON doesn't support comments)
+6. **Use the adapter**: For complex configs, write in Caddyfile and adapt to JSON
+
+## Common Patterns
+
+### Multi-Site Hosting
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "match": [{"host": ["site1.example.com"]}],
+              "handle": [{
+                "handler": "reverse_proxy",
+                "upstreams": [{"dial": "localhost:8081"}]
+              }]
+            },
+            {
+              "match": [{"host": ["site2.example.com"]}],
+              "handle": [{
+                "handler": "reverse_proxy",
+                "upstreams": [{"dial": "localhost:8082"}]
+              }]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Static File Server
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":80"],
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "file_server",
+                  "root": "/var/www/html",
+                  "browse": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+## Error Responses
+
+Configuration errors include detailed information:
+
+```json
+{
+  "error": "loading new config: provision http: server srv0: setting up route handlers: route 0: loading handler modules: position 0: loading module 'http.handlers.reverse_proxy': upstreams: dial address is required"
+}
+```
+
+## See Also
+
+- [Caddyfile Format](/config/caddyfile) - Human-friendly configuration
+- [Configuration Structure](/config/structure) - Understanding config organization
+- [Admin API](/guides/api) - Runtime configuration management

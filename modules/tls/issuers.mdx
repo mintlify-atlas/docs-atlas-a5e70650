@@ -1,0 +1,460 @@
+---
+title: Certificate Issuers
+description: ACME, ZeroSSL, and Internal CA issuers for automated certificate management
+---
+
+Certificate issuers are modules that obtain and manage TLS certificates. Caddy supports multiple issuer types for different use cases.
+
+## ACME Issuer
+
+The ACME issuer manages certificates using the ACME protocol (RFC 8555), compatible with Let's Encrypt, ZeroSSL ACME, and other ACME CAs.
+
+### Configuration
+
+<ParamField path="module" type="string" default="acme">
+  Module identifier for ACME issuer.
+</ParamField>
+
+<ParamField path="ca" type="string" default="https://acme-v02.api.letsencrypt.org/directory">
+  The URL to the CA's ACME directory endpoint.
+  
+  Common values:
+  - `https://acme-v02.api.letsencrypt.org/directory` (Let's Encrypt production)
+  - `https://acme-staging-v02.api.letsencrypt.org/directory` (Let's Encrypt staging)
+  - `https://acme.zerossl.com/v2/DV90` (ZeroSSL ACME)
+</ParamField>
+
+<ParamField path="test_ca" type="string" default="https://acme-staging-v02.api.letsencrypt.org/directory">
+  The URL to the test CA's ACME directory endpoint.
+  
+  This endpoint is only used during retries if there is a failure using the primary CA.
+</ParamField>
+
+<ParamField path="email" type="string">
+  Your email address, so the CA can contact you if necessary.
+  
+  <Info>
+    Not required, but strongly recommended so you can be reached if there is a problem. Your email is not sent to any Caddy mothership or used for any purpose other than ACME transactions.
+  </Info>
+</ParamField>
+
+<ParamField path="profile" type="string">
+  Optionally select an ACME profile to use for certificate orders.
+  
+  Must be a profile name offered by the ACME server, which are listed at its directory endpoint.
+  
+  <Warning>EXPERIMENTAL: Subject to change. See https://datatracker.ietf.org/doc/draft-aaron-acme-profiles/</Warning>
+</ParamField>
+
+<ParamField path="account_key" type="string">
+  If you have an existing account with the ACME server, put the private key here in PEM format.
+  
+  The ACME client will look up your account information with this key first before trying to create a new one. Supports placeholders (e.g., environment variables).
+</ParamField>
+
+<ParamField path="external_account" type="object">
+  If using an ACME CA that requires external account binding, specify the CA-provided credentials here.
+  
+  ```json
+  {
+    "key_id": "your-eab-key-id",
+    "mac_key": "your-eab-hmac-key"
+  }
+  ```
+</ParamField>
+
+<ParamField path="acme_timeout" type="duration" default="0">
+  Time to wait before timing out an ACME operation.
+  
+  Default of 0 means no timeout.
+</ParamField>
+
+<ParamField path="certificate_lifetime" type="duration" default="0">
+  The validity period to ask the CA to issue a certificate for.
+  
+  <Warning>
+    Not all CAs support this. Check with your CA's ACME documentation to see if this is allowed and what values may be used.
+  </Warning>
+  
+  Default of 0 means CA chooses lifetime. This value computes the "notAfter" field of the ACME order; the system must have a reasonably synchronized clock.
+  
+  <Info>EXPERIMENTAL: Subject to change.</Info>
+</ParamField>
+
+### ACME Challenges
+
+<ParamField path="challenges" type="object">
+  Configures the various ACME challenge types.
+</ParamField>
+
+#### HTTP Challenge
+
+<ParamField path="challenges.http.disabled" type="boolean" default="false">
+  If true, the HTTP challenge will be disabled.
+</ParamField>
+
+<ParamField path="challenges.http.alternate_port" type="integer">
+  An alternate port on which to service the HTTP challenge.
+  
+  <Note>
+    The HTTP challenge port is hard-coded into the ACME spec (port 80) and cannot be changed. You would need to forward packets from port 80 to this alternate port.
+  </Note>
+</ParamField>
+
+#### TLS-ALPN Challenge
+
+<ParamField path="challenges.tls_alpn.disabled" type="boolean" default="false">
+  If true, the TLS-ALPN challenge will be disabled.
+</ParamField>
+
+<ParamField path="challenges.tls_alpn.alternate_port" type="integer">
+  An alternate port on which to service the TLS-ALPN challenge.
+  
+  <Note>
+    The TLS-ALPN challenge port is hard-coded into the spec (port 443) and cannot be changed. You would need to forward packets from port 443 to this alternate port.
+  </Note>
+</ParamField>
+
+#### DNS Challenge
+
+<ParamField path="challenges.dns" type="object">
+  Configures the ACME DNS challenge.
+  
+  <Note>
+    This is the only challenge type that does not require a direct connection to Caddy from an external server. It's typically used when behind firewalls or for wildcard certificates.
+  </Note>
+</ParamField>
+
+<ParamField path="challenges.dns.provider" type="object" required>
+  The DNS provider module to use which will manage DNS records relevant to the ACME challenge.
+  
+  Example providers: `cloudflare`, `route53`, `gandi`, etc.
+</ParamField>
+
+<ParamField path="challenges.dns.ttl" type="duration">
+  The TTL of the TXT record used for the DNS challenge.
+</ParamField>
+
+<ParamField path="challenges.dns.propagation_delay" type="duration" default="0">
+  How long to wait before starting propagation checks.
+</ParamField>
+
+<ParamField path="challenges.dns.propagation_timeout" type="duration" default="2m">
+  Maximum time to wait for temporary DNS record to appear.
+  
+  Set to `-1` to disable propagation checks.
+</ParamField>
+
+<ParamField path="challenges.dns.resolvers" type="array">
+  Custom DNS resolvers to prefer over system/built-in defaults.
+  
+  Often necessary when using split-horizon DNS.
+  
+  Example: `["8.8.8.8:53", "1.1.1.1:53"]`
+</ParamField>
+
+<ParamField path="challenges.dns.override_domain" type="string">
+  Override the domain to use for the DNS challenge.
+  
+  This delegates the challenge to a different domain (e.g., one that updates faster or has a provider API).
+</ParamField>
+
+#### Challenge Distribution
+
+<ParamField path="challenges.bind_host" type="string">
+  Optionally customize the host to which a listener is bound if required for solving a challenge.
+</ParamField>
+
+<ParamField path="challenges.distributed" type="boolean" default="true">
+  Whether distributed solving is enabled.
+  
+  <Info>
+    Applies to HTTP and TLS-ALPN challenges. When enabled, challenge info is written to storage backend for distribution across a cluster.
+  </Info>
+  
+  Set to `false` only if you cannot reliably use storage backend for writing/distributing challenge info. When disabled, challenges can only be solved from the Caddy instance that initiated the challenge (with exception for HTTP challenges initiated with the same ACME account).
+</ParamField>
+
+### Certificate Chain Preferences
+
+<ParamField path="preferred_chains" type="object">
+  Preferences for selecting alternate certificate chains, if offered by the CA.
+  
+  By default, the first offered chain will be selected.
+</ParamField>
+
+<ParamField path="preferred_chains.smallest" type="boolean">
+  Prefer chains with the fewest number of bytes.
+</ParamField>
+
+<ParamField path="preferred_chains.root_common_name" type="array">
+  Select first chain having a root with one of these common names.
+  
+  Example: `["ISRG Root X1", "ISRG Root X2"]`
+</ParamField>
+
+<ParamField path="preferred_chains.any_common_name" type="array">
+  Select first chain that has any issuer with one of these common names.
+</ParamField>
+
+### Advanced Options
+
+<ParamField path="trusted_roots_pem_files" type="array">
+  An array of files of CA certificates to accept when connecting to the ACME CA.
+  
+  <Warning>
+    Generally, you should only use this if the ACME CA endpoint is internal or for development/testing purposes.
+  </Warning>
+</ParamField>
+
+<ParamField path="network_proxy" type="object">
+  Forward proxy module configuration for ACME requests.
+</ParamField>
+
+## ACME Examples
+
+### Basic Let's Encrypt
+
+```json
+{
+  "module": "acme",
+  "email": "you@example.com"
+}
+```
+
+### DNS Challenge with Cloudflare
+
+```json
+{
+  "module": "acme",
+  "email": "you@example.com",
+  "challenges": {
+    "dns": {
+      "provider": {
+        "name": "cloudflare",
+        "api_token": "{env.CLOUDFLARE_API_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### External Account Binding
+
+```json
+{
+  "module": "acme",
+  "ca": "https://acme.sectigo.com/v2/InCommonRSAOV",
+  "email": "you@example.com",
+  "external_account": {
+    "key_id": "your-eab-kid",
+    "mac_key": "your-eab-hmac-key"
+  }
+}
+```
+
+### Preferred Chain Selection
+
+```json
+{
+  "module": "acme",
+  "email": "you@example.com",
+  "preferred_chains": {
+    "root_common_name": ["ISRG Root X1"]
+  }
+}
+```
+
+## ZeroSSL Issuer
+
+The ZeroSSL issuer uses the ZeroSSL API directly (distinct from ZeroSSL's ACME endpoint).
+
+<Note>
+  To use ZeroSSL's ACME endpoint, use the ACME issuer configured with ZeroSSL's ACME directory.
+</Note>
+
+### Configuration
+
+<ParamField path="module" type="string" default="zerossl">
+  Module identifier for ZeroSSL issuer.
+</ParamField>
+
+<ParamField path="api_key" type="string" required>
+  The API key (or "access key") for using the ZeroSSL API.
+  
+  Supports placeholders for environment variables.
+</ParamField>
+
+<ParamField path="validity_days" type="integer">
+  How many days the certificate should be valid for.
+  
+  <Warning>
+    Only certain values are accepted; see ZeroSSL documentation.
+  </Warning>
+</ParamField>
+
+<ParamField path="listen_host" type="string">
+  The host to bind to when opening a listener for verifying domain names (or IPs).
+</ParamField>
+
+<ParamField path="alternate_http_port" type="integer">
+  If HTTP is forwarded from port 80, specify the forwarded port here.
+</ParamField>
+
+<ParamField path="cname_validation" type="object">
+  Use CNAME validation instead of HTTP.
+  
+  ZeroSSL's API uses CNAME records for DNS validation, similar to how Let's Encrypt uses TXT records for the DNS challenge.
+  
+  Accepts same configuration as ACME DNS challenge (provider, TTL, propagation settings, etc.).
+</ParamField>
+
+### ZeroSSL Example
+
+```json
+{
+  "module": "zerossl",
+  "api_key": "{env.ZEROSSL_API_KEY}",
+  "validity_days": 90
+}
+```
+
+## Internal Issuer
+
+The internal issuer generates certificates using a locally-configured CA (managed by Caddy's PKI app).
+
+<Info>
+  Perfect for development, testing, or internal services. Certificates are signed by Caddy's internal CA.
+</Info>
+
+### Configuration
+
+<ParamField path="module" type="string" default="internal">
+  Module identifier for internal issuer.
+</ParamField>
+
+<ParamField path="ca" type="string" default="local">
+  The ID of the CA to use for signing.
+  
+  The CA can be configured with the `pki` app.
+</ParamField>
+
+<ParamField path="lifetime" type="duration" default="12h">
+  The validity period of certificates.
+</ParamField>
+
+<ParamField path="sign_with_root" type="boolean" default="false">
+  If true, the root will be the issuer instead of the intermediate.
+  
+  <Warning>
+    NOT recommended. Should only be used when devices/clients do not properly validate certificate chains.
+  </Warning>
+</ParamField>
+
+### Internal Issuer Example
+
+```json
+{
+  "module": "internal",
+  "ca": "local",
+  "lifetime": "24h"
+}
+```
+
+### Development Configuration
+
+```json
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["localhost", "*.local", "127.0.0.1"],
+            "issuers": [
+              {
+                "module": "internal",
+                "ca": "local"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+## Caddyfile Configuration
+
+### ACME Issuer
+
+```caddyfile
+example.com {
+  tls {
+    issuer acme {
+      dir https://acme-v02.api.letsencrypt.org/directory
+      email you@example.com
+      dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+  }
+}
+```
+
+### ZeroSSL Issuer
+
+```caddyfile
+example.com {
+  tls {
+    issuer zerossl {env.ZEROSSL_API_KEY} {
+      validity_days 90
+    }
+  }
+}
+```
+
+### Internal Issuer
+
+```caddyfile
+localhost {
+  tls {
+    issuer internal {
+      ca local
+      lifetime 24h
+    }
+  }
+}
+```
+
+## Multi-Issuer Redundancy
+
+Caddy can use multiple issuers for redundancy. If the first fails, it tries the next:
+
+```json
+{
+  "issuers": [
+    {
+      "module": "acme",
+      "ca": "https://acme-v02.api.letsencrypt.org/directory"
+    },
+    {
+      "module": "acme",
+      "ca": "https://acme.zerossl.com/v2/DV90"
+    }
+  ]
+}
+```
+
+## Best Practices
+
+<Warning>
+  **Rate Limits:** Let's Encrypt has rate limits. Use the staging environment for testing to avoid hitting production limits.
+</Warning>
+
+<Info>
+  **DNS Challenge:** Required for wildcard certificates and useful when Caddy is behind a firewall. Requires a supported DNS provider.
+</Info>
+
+<Note>
+  **Internal CA:** Great for development, but clients will show security warnings unless they trust your CA. Install Caddy's root certificate on client devices for testing.
+</Note>

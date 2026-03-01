@@ -1,0 +1,235 @@
+---
+title: 'Introduction to Caddy'
+description: 'A modern, extensible web server platform with automatic HTTPS that serves every site securely by default'
+---
+
+# Every site on HTTPS
+
+Caddy is an extensible server platform that uses TLS by default. Built with Go, it offers higher memory safety guarantees than other servers and runs anywhere with no external dependencies.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running with Caddy in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/install">
+    Download and install Caddy on your platform
+  </Card>
+  <Card title="Configuration" icon="sliders" href="https://caddyserver.com/docs/caddyfile">
+    Learn the Caddyfile syntax for easy configuration
+  </Card>
+  <Card title="API Reference" icon="code" href="https://caddyserver.com/docs/api">
+    Explore Caddy's powerful JSON API
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Automatic HTTPS by Default
+
+Caddy automatically obtains and renews TLS certificates for your sites, with no configuration required.
+
+<CardGroup cols={2}>
+  <Card title="Zero Config TLS" icon="shield-check">
+    Caddy obtains certificates from ZeroSSL and Let's Encrypt automatically. No manual certificate management needed.
+  </Card>
+  <Card title="Fully-Managed Local CA" icon="building">
+    Internal names and IPs get certificates from a local CA that Caddy manages for you.
+  </Card>
+  <Card title="Cluster Coordination" icon="network-wired">
+    Multiple Caddy instances can coordinate certificate management in a cluster.
+  </Card>
+  <Card title="ECH Support" icon="lock">
+    Encrypted ClientHello (ECH) support for enhanced privacy.
+  </Card>
+</CardGroup>
+
+### Production-Ready at Scale
+
+Caddy has served **trillions of requests** and managed **millions of TLS certificates** in production environments.
+
+<Note>
+Caddy scales to hundreds of thousands of sites as proven in production deployments worldwide.
+</Note>
+
+### Modern Protocol Support
+
+- **HTTP/1.1, HTTP/2, and HTTP/3** all supported by default
+- No configuration needed to enable modern protocols
+- Automatic protocol negotiation
+
+### Highly Extensible Architecture
+
+Caddy's modular architecture allows it to do anything without bloat:
+
+```go
+// Example: Caddy apps are just Go programs implemented as modules
+type App interface {
+    Start() error
+    Stop() error
+}
+```
+
+<CodeGroup>
+```go Main Entry Point
+// From cmd/main.go
+func Main() {
+    if len(os.Args) == 0 {
+        fmt.Printf("[FATAL] no arguments provided by OS; args[0] must be command\n")
+        os.Exit(caddy.ExitCodeFailedStartup)
+    }
+
+    if err := defaultFactory.Build().Execute(); err != nil {
+        var exitError *exitError
+        if errors.As(err, &exitError) {
+            os.Exit(exitError.ExitCode)
+        }
+        os.Exit(1)
+    }
+}
+```
+
+```go HTTP Handler Interface
+// From modules/caddyhttp/caddyhttp.go
+// Handler is like http.Handler except ServeHTTP may return an error.
+type Handler interface {
+    ServeHTTP(http.ResponseWriter, *http.Request) error
+}
+
+// MiddlewareHandler chains handlers together
+type MiddlewareHandler interface {
+    ServeHTTP(http.ResponseWriter, *http.Request, Handler) error
+}
+```
+</CodeGroup>
+
+## Configuration Approaches
+
+Caddy is unique in offering multiple ways to configure the same server:
+
+<Steps>
+  <Step title="Caddyfile (Recommended for most)">
+    The Caddyfile is Caddy's native configuration format - simple, human-readable, and powerful.
+    
+    ```caddyfile
+    example.com {
+        reverse_proxy localhost:9000
+    }
+    ```
+  </Step>
+  
+  <Step title="JSON (Native format)">
+    JSON is Caddy's native config language. The Caddyfile and other formats are adapted to JSON.
+    
+    ```json
+    {
+      "apps": {
+        "http": {
+          "servers": {
+            "srv0": {
+              "listen": [": 443"],
+              "routes": [...]
+            }
+          }
+        }
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="JSON API (Dynamic configuration)">
+    Caddy exposes a RESTful JSON API for dynamic, runtime configuration changes with zero downtime.
+    
+    ```bash
+    curl -X POST http://localhost:2019/load \
+      -H "Content-Type: application/json" \
+      -d @caddy.json
+    ```
+  </Step>
+  
+  <Step title="Config Adapters">
+    Use config adapters to convert other formats (YAML, TOML, NGINX config) into Caddy JSON.
+  </Step>
+</Steps>
+
+## Why Caddy?
+
+### Stays Up When Others Go Down
+
+Caddy continues serving even when other servers would crash due to TLS, OCSP, or certificate-related issues.
+
+### No External Dependencies
+
+Caddy runs anywhere with no external dependencies - not even libc. Just download and run.
+
+### Memory Safety
+
+Written in Go, a language with higher memory safety guarantees than C/C++ servers.
+
+### Actually Fun to Use
+
+From the README:
+
+> Actually **fun to use**
+
+<Warning>
+The name "Caddy" is trademarked. Please call it "Caddy" or "the Caddy web server", not "Caddy Server" or "CaddyServer".
+</Warning>
+
+## Architecture Overview
+
+Caddy is built on a powerful plugin system:
+
+```go
+// From caddy.go - Config structure
+type Config struct {
+    Admin   *AdminConfig `json:"admin,omitempty"`
+    Logging *Logging     `json:"logging,omitempty"`
+    
+    // StorageRaw is a storage module for assets like TLS certificates
+    StorageRaw json.RawMessage `json:"storage,omitempty"`
+    
+    // AppsRaw are the apps that Caddy will load and run
+    AppsRaw ModuleMap `json:"apps,omitempty"`
+}
+```
+
+### Core Apps
+
+Two apps ship standard with Caddy:
+
+1. **`tls`** - Provides TLS facilities including certificate loading, management, and client auth
+2. **`http`** - Full-featured HTTP server with reverse proxy, file server, and more
+
+## Project Information
+
+<Note>
+Caddy was created by **Matthew Holt** in 2014 while studying computer science at Brigham Young University. It became the first web server to use HTTPS automatically and by default.
+</Note>
+
+### Open Source & Community
+
+- **License**: Apache 2.0
+- **Language**: Go 1.25.0 or newer required
+- **Community**: Active forum at [caddy.community](https://caddy.community)
+- **Sponsorship**: Caddy is a project of [ZeroSSL](https://zerossl.com), an HID Global company
+
+### Powered by CertMagic
+
+Caddy's automatic HTTPS is powered by [CertMagic](https://github.com/caddyserver/certmagic), an open-source library that handles all the complexity of certificate management.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="play" href="/quickstart">
+    Follow our quick start guide to serve your first site
+  </Card>
+  <Card title="Install Caddy" icon="download" href="/install">
+    Choose your installation method and platform
+  </Card>
+  <Card title="Learn Caddyfile" icon="book" href="https://caddyserver.com/docs/caddyfile">
+    Master Caddy's configuration syntax
+  </Card>
+  <Card title="Explore Modules" icon="puzzle-piece" href="https://caddyserver.com/docs/modules/">
+    Discover available modules and plugins
+  </Card>
+</CardGroup>

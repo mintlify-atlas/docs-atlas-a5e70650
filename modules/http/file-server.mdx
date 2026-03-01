@@ -1,0 +1,304 @@
+---
+title: File Server
+description: Serve static files from the filesystem
+---
+
+The file server module is a handler that serves static files from the local filesystem or custom file systems.
+
+**Module ID:** `http.handlers.file_server`
+
+## Overview
+
+The file server constructs the path to serve by joining the site root and the sanitized request path. Files within the root and links with targets outside the site root may be accessed.
+
+## Configuration
+
+<ParamField path="fs" type="string" default="{http.vars.fs}">
+  The file system implementation to use. By default, Caddy uses the local disk file system.
+  
+  If a non-default filesystem is used, it must first be registered in the globals section.
+</ParamField>
+
+<ParamField path="root" type="string" default="{http.vars.root}">
+  The path to the root of the site. Default is `{http.vars.root}` if set, or current working directory otherwise.
+  
+  <Note type="warning">
+    A site root is not a sandbox. Although the file server sanitizes the request URI to prevent directory traversal, files and folders within the root may be directly accessed based on the request path.
+  </Note>
+</ParamField>
+
+<ParamField path="hide" type="array of strings">
+  List of files or folders to hide. The file server will pretend they don't exist. Accepts glob patterns like `*.ext` or `/foo/*/bar`.
+  
+  Because site roots can be dynamic, this list uses file system paths, not request paths. The base of relative paths is the current working directory.
+  
+  Examples:
+  - `hidden` - Hides all files/folders named "hidden" anywhere
+  - `./hidden` - Hides only the "hidden" file/folder in current directory
+  - `*.secret` - Hides all files ending with .secret
+</ParamField>
+
+<ParamField path="index_names" type="array of strings" default="['index.html', 'index.txt']">
+  The names of files to try as index files if a folder is requested.
+</ParamField>
+
+<ParamField path="browse" type="object">
+  Enables file listings if a directory was requested and no index file is present.
+  
+  When enabled, the file server may serve a JSON array of the directory listing when the `Accept` header includes `application/json`:
+  
+  ```json
+  [{
+    "name": "file.txt",
+    "size": 1024,
+    "url": "/path/to/file.txt",
+    "mod_time": "2024-01-15T10:30:00Z",
+    "mode": 420,
+    "is_dir": false,
+    "is_symlink": false
+  }]
+  ```
+</ParamField>
+
+<ParamField path="canonical_uris" type="boolean" default="true">
+  Use redirects to enforce trailing slashes for directories or remove them for files.
+  
+  Canonicalization will not happen if the last element of the request's path (the filename) was changed in an internal rewrite.
+</ParamField>
+
+<ParamField path="pass_thru" type="boolean" default="false">
+  If enabled and a requested file is not found, invoke the next handler in the chain instead of returning a 404 error.
+  
+  This is useful for SPAs (Single Page Applications) where you want to serve index.html for any non-existent routes.
+</ParamField>
+
+<ParamField path="status_code" type="string">
+  Override the status code written when successfully serving a file. Useful when explicitly serving a file as an error page display.
+  
+  Supports placeholders. By default, the status code will be 200, or 206 for partial content.
+</ParamField>
+
+## Precompressed Files
+
+<ParamField path="precompressed" type="module map">
+  Selection of encoders to use to check for precompressed sidecar files.
+  
+  Module namespace: `http.precompressed`
+  
+  ```json
+  "precompressed": {
+    "gzip": {},
+    "br": {}
+  }
+  ```
+  
+  If a request comes in with `Accept-Encoding: gzip`, and `file.txt.gz` exists, Caddy will serve the precompressed file with `Content-Encoding: gzip`.
+</ParamField>
+
+<ParamField path="precompressed_order" type="array of strings">
+  If the client has no strong preference (q-factor), choose encodings in this order.
+  
+  ```json
+  "precompressed_order": ["br", "gzip"]
+  ```
+</ParamField>
+
+## Etag Configuration
+
+<ParamField path="etag_file_extensions" type="array of strings">
+  List of file extensions to try to read Etags from. If set, file Etags will be read from sidecar files with these suffixes, instead of generating our own.
+  
+  Etag values in the files must be quoted as per RFC 7232.
+  
+  ```json
+  "etag_file_extensions": [".etag", ".md5"]
+  ```
+</ParamField>
+
+## Response Headers
+
+The file server sets the following headers:
+
+- **Etag** - Calculated from file modification time and size
+- **Last-Modified** - File's modification time
+- **Content-Type** - Determined from file extension (no MIME sniffing)
+- **Content-Encoding** - Set if serving precompressed files
+- **Vary: Accept-Encoding** - Always set for proper caching
+
+The file server properly handles conditional requests with:
+- `If-Match`
+- `If-Unmodified-Since`
+- `If-Modified-Since`
+- `If-None-Match`
+- `Range`
+- `If-Range`
+
+## Configuration Examples
+
+### Basic File Server
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "root": "/var/www/html"
+}
+```
+
+```caddyfile Caddyfile
+file_server
+```
+</CodeGroup>
+
+### With Browse Enabled
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "root": "/var/www/html",
+  "browse": {}
+}
+```
+
+```caddyfile Caddyfile
+file_server browse
+```
+</CodeGroup>
+
+### Hiding Files
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "root": "/var/www/html",
+  "hide": [".git", "*.secret", "/config/*"]
+}
+```
+
+```caddyfile Caddyfile
+file_server {
+    hide .git *.secret /config/*
+}
+```
+</CodeGroup>
+
+### With Precompressed Files
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "root": "/var/www/html",
+  "precompressed": {
+    "gzip": {},
+    "br": {}
+  },
+  "precompressed_order": ["br", "gzip"]
+}
+```
+
+```caddyfile Caddyfile
+file_server {
+    precompressed gzip br
+}
+```
+</CodeGroup>
+
+### SPA Configuration
+
+<CodeGroup>
+```json JSON
+{
+  "handle": [
+    {
+      "handler": "file_server",
+      "pass_thru": true
+    },
+    {
+      "handler": "rewrite",
+      "uri": "/index.html"
+    },
+    {
+      "handler": "file_server"
+    }
+  ]
+}
+```
+
+```caddyfile Caddyfile
+try_files {path} /index.html
+file_server
+```
+</CodeGroup>
+
+### Custom Index Files
+
+```json
+{
+  "handler": "file_server",
+  "root": "/var/www/html",
+  "index_names": ["index.html", "index.htm", "default.html"]
+}
+```
+
+## Security Considerations
+
+<Note type="warning">
+**Important Security Notes:**
+
+1. The site root is **not a sandbox**. Files within the root can be accessed based on the request path.
+2. On Windows, the file server rejects:
+   - Paths with Alternate Data Streams (ADS)
+   - Paths with "8.3" short names
+3. Use the `hide` directive to prevent access to sensitive files
+4. The file server does **not** perform MIME sniffing on content
+</Note>
+
+## Path Sanitization
+
+The file server uses `path.Clean()` to sanitize request paths before joining with the root:
+
+- Multiple slashes are collapsed
+- Dot elements (`.` and `..`) are resolved and removed  
+- Paths are cleaned to prevent directory traversal
+
+For example:
+- `/foo/../bar` becomes `/bar`
+- `/foo//bar` becomes `/foo/bar`
+- `/./foo` becomes `/foo`
+
+## Etag Calculation
+
+Etags are calculated using:
+```
+"<modification_time_unix_nano_base36><file_size_base36>"
+```
+
+This provides a strong validator for HTTP caching without reading file contents.
+
+<Note>
+The file server uses millisecond-precision modification times (on ext4 and similar filesystems), which qualifies as a strong validator per RFC 9110.
+</Note>
+
+## Platform-Specific Behavior
+
+### Windows
+
+On Windows, the file server:
+- Trims trailing dots and spaces from paths (Windows ignores them)
+- Rejects paths with `:` characters (ADS)
+- Rejects paths with `~` in short segments (8.3 short names)
+
+This prevents security issues where files might be served unintentionally.
+
+## Error Handling
+
+The file server returns:
+
+- **404 Not Found** - File doesn't exist (or is hidden)
+- **403 Forbidden** - Permission denied
+- **400 Bad Request** - Invalid path
+- **503 Service Unavailable** - Too many open files (with `Retry-After` header)
+- **405 Method Not Allowed** - Method other than GET/HEAD (except in error context)

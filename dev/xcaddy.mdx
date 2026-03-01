@@ -1,0 +1,429 @@
+---
+title: Using xcaddy
+description: Build custom Caddy binaries with plugins using the xcaddy command-line tool
+---
+
+xcaddy is the official build tool for Caddy that simplifies building custom binaries with plugins and proper version information.
+
+## What is xcaddy?
+
+From `README.md:145`, xcaddy is **[our builder tool](https://github.com/caddyserver/xcaddy)** that automates the build process.
+
+It handles:
+- Creating proper project structure
+- Managing Go modules
+- Injecting version information  
+- Adding custom plugins
+- Cross-compilation
+
+## Installation
+
+Install xcaddy using Go:
+
+```bash
+go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+```
+
+Verify installation:
+
+```bash
+xcaddy version
+```
+
+<Note>
+Ensure `$GOPATH/bin` is in your PATH to run xcaddy from anywhere.
+</Note>
+
+## Basic Usage
+
+### Build Standard Caddy
+
+From `README.md:148`:
+
+```bash
+xcaddy build
+```
+
+This creates a `caddy` binary in the current directory with:
+- Proper version information
+- All standard modules
+- Platform-specific optimizations
+
+### Build Specific Version
+
+```bash
+xcaddy build v2.8.0
+```
+
+Or use a commit hash:
+
+```bash
+xcaddy build abc123def456
+```
+
+Or a branch:
+
+```bash
+xcaddy build master
+```
+
+## Building with Plugins
+
+### Add a Plugin from GitHub
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/nginx-adapter
+```
+
+### Add Multiple Plugins
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/nginx-adapter \
+    --with github.com/greenpau/caddy-security
+```
+
+### Specify Plugin Version
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/nginx-adapter@v0.2.0
+```
+
+### Local Plugin Development
+
+For local plugin development, use a local path:
+
+```bash
+xcaddy build \
+    --with github.com/example/caddy-plugin=../caddy-plugin
+```
+
+<Tip>
+The local path is relative to where you run xcaddy. Use absolute paths to avoid confusion.
+</Tip>
+
+## Output Control
+
+### Specify Output Path
+
+```bash
+xcaddy build --output /usr/local/bin/caddy
+```
+
+### Cross-Platform Builds
+
+```bash
+# Linux AMD64
+GOOS=linux GOARCH=amd64 xcaddy build
+
+# Windows AMD64
+GOOS=windows GOARCH=amd64 xcaddy build --output caddy.exe
+
+# macOS ARM64 (Apple Silicon)
+GOOS=darwin GOARCH=arm64 xcaddy build
+
+# Linux ARM (Raspberry Pi)
+GOOS=linux GOARCH=arm GOARM=7 xcaddy build
+```
+
+## What xcaddy Automates
+
+From `README.md:151`, xcaddy performs these steps automatically:
+
+<Steps>
+
+<Step title="Create project folder">
+```bash
+mkdir caddy
+cd caddy
+```
+</Step>
+
+<Step title="Copy main.go">
+Copies [Caddy's main.go](https://github.com/caddyserver/caddy/blob/master/cmd/caddy/main.go) and adds plugin imports:
+
+```go
+import (
+    _ "time/tzdata"
+    caddycmd "github.com/caddyserver/caddy/v2/cmd"
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+    
+    // Plugins added by xcaddy
+    _ "github.com/example/plugin"
+)
+```
+</Step>
+
+<Step title="Initialize Go module">
+```bash
+go mod init caddy
+```
+</Step>
+
+<Step title="Pin Caddy version">
+```bash
+go get github.com/caddyserver/caddy/v2@version
+```
+</Step>
+
+<Step title="Add plugin dependencies">
+```bash
+go get github.com/example/plugin@version
+```
+</Step>
+
+<Step title="Build with proper flags">
+```bash
+go build -tags=nobadger,nomysql,nopgx
+```
+</Step>
+
+</Steps>
+
+## Advanced Options
+
+### Replace Modules
+
+Replace a dependency with a fork:
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/caddy/v2=github.com/myuser/caddy/v2@mybranch
+```
+
+### Build with Specific Go Version
+
+```bash
+go1.25.0 install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+go1.25.0 run github.com/caddyserver/xcaddy/cmd/xcaddy build
+```
+
+### Disable Module Optimization
+
+By default, xcaddy trims unused dependencies:
+
+```bash
+xcaddy build --with-trimpath=false
+```
+
+## Development Workflow
+
+### Quick Iteration
+
+For rapid plugin development:
+
+```bash
+# Build with local plugin
+xcaddy build \
+    --with github.com/myuser/caddy-plugin=./caddy-plugin
+
+# Test
+./caddy run --config test.Caddyfile
+
+# Make changes to plugin...
+
+# Rebuild
+xcaddy build \
+    --with github.com/myuser/caddy-plugin=./caddy-plugin
+```
+
+### Using xcaddy run
+
+Test without building:
+
+```bash
+xcaddy run \
+    --with github.com/myuser/caddy-plugin=./caddy-plugin \
+    --config Caddyfile
+```
+
+This builds a temporary binary and runs it immediately.
+
+## Build Caching
+
+xcaddy leverages Go's build cache. Subsequent builds are faster:
+
+```bash
+# First build (slow)
+xcaddy build --with github.com/example/plugin
+
+# Subsequent builds (fast, if plugin unchanged)
+xcaddy build --with github.com/example/plugin
+```
+
+Clear the cache if needed:
+
+```bash
+go clean -cache
+```
+
+## Environment Variables
+
+### Proxy Configuration
+
+```bash
+export GOPROXY=https://proxy.golang.org,direct
+xcaddy build
+```
+
+### Private Repositories
+
+```bash
+export GOPRIVATE=github.com/myorg/*
+xcaddy build --with github.com/myorg/private-plugin
+```
+
+### Custom Build Flags
+
+```bash
+export XCADDY_GO_BUILD_FLAGS="-ldflags='-s -w' -trimpath"
+xcaddy build
+```
+
+## Common Plugin Examples
+
+### Nginx Config Adapter
+
+Convert Nginx configs to Caddy:
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/nginx-adapter
+
+./caddy adapt --config nginx.conf --adapter nginx
+```
+
+### CloudFlare DNS Provider
+
+For DNS-01 ACME challenges:
+
+```bash
+xcaddy build \
+    --with github.com/caddy-dns/cloudflare
+```
+
+### Rate Limiting
+
+```bash
+xcaddy build \
+    --with github.com/mholt/caddy-ratelimit
+```
+
+### Multiple Plugins Together
+
+```bash
+xcaddy build \
+    --with github.com/caddyserver/nginx-adapter \
+    --with github.com/caddy-dns/cloudflare \
+    --with github.com/greenpau/caddy-security \
+    --with github.com/mholt/caddy-ratelimit
+```
+
+## Verification
+
+After building, verify your binary includes plugins:
+
+```bash
+# List all modules
+./caddy list-modules
+
+# Check for specific module
+./caddy list-modules | grep plugin_name
+
+# Verify version
+./caddy version
+```
+
+## Troubleshooting
+
+### Module Not Found
+
+Ensure the plugin path is correct and accessible:
+
+```bash
+# Check if module exists
+go get -d github.com/example/plugin
+
+# Then build
+xcaddy build --with github.com/example/plugin
+```
+
+### Version Conflicts
+
+Specify exact versions:
+
+```bash
+xcaddy build v2.8.0 \
+    --with github.com/example/plugin@v1.2.3
+```
+
+### Permission Denied
+
+On Linux, set capabilities:
+
+```bash
+sudo setcap cap_net_bind_service=+ep ./caddy
+```
+
+### Build Fails with Local Plugin
+
+Ensure your plugin has a `go.mod` file:
+
+```bash
+cd caddy-plugin
+go mod init github.com/myuser/caddy-plugin
+go mod tidy
+```
+
+### GOPROXY Timeout
+
+Use direct mode:
+
+```bash
+GOPROXY=direct xcaddy build \
+    --with github.com/example/plugin
+```
+
+## Comparison with Manual Build
+
+<CodeGroup>
+```bash xcaddy (recommended)
+xcaddy build \
+    --with github.com/example/plugin
+```
+
+```bash Manual Process
+mkdir caddy-build && cd caddy-build
+curl -O https://raw.githubusercontent.com/caddyserver/caddy/master/cmd/caddy/main.go
+# Edit main.go to add plugin import
+go mod init caddy
+go get github.com/caddyserver/caddy/v2@latest
+go get github.com/example/plugin@latest
+go build -tags=nobadger,nomysql,nopgx
+```
+</CodeGroup>
+
+xcaddy is:
+- ✅ Faster and less error-prone
+- ✅ Handles version information correctly
+- ✅ Manages all dependencies automatically
+- ✅ Supports quick iteration with local plugins
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Builds" icon="hammer" href="/dev/custom-builds">
+    Create production-ready custom builds
+  </Card>
+  <Card title="Plugin Tutorial" icon="graduation-cap" href="/dev/plugin-tutorial">
+    Develop your own plugin
+  </Card>
+  <Card title="Building from Source" icon="code" href="/dev/building">
+    Manual build process details
+  </Card>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Deep dive into module creation
+  </Card>
+</CardGroup>

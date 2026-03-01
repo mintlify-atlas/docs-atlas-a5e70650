@@ -1,0 +1,278 @@
+---
+title: caddy adapt
+description: Convert a config file to Caddy's native JSON format
+---
+
+The `caddy adapt` command adapts a configuration to Caddy's native JSON format and outputs the result.
+
+## Usage
+
+```bash
+caddy adapt --config <path> [flags]
+```
+
+## Description
+
+Adapts a configuration to Caddy's native JSON format and writes the output to stdout, along with any warnings to stderr.
+
+This is useful for:
+- **Previewing** how your Caddyfile will be converted to JSON
+- **Debugging** config adapter behavior
+- **Validating** your config syntax
+- **Learning** Caddy's JSON structure
+- **Generating** JSON configs from other formats
+
+## Flags
+
+<ParamField path="--config" type="string" required>
+  Configuration file to adapt (required).
+  
+  Use `-` to read from stdin instead of a file.
+</ParamField>
+
+<ParamField path="--adapter" type="string" default="caddyfile">
+  Name of config adapter to use.
+  
+  Default: `caddyfile`
+  
+  Available adapters depend on what's compiled in. Common ones:
+  - `caddyfile` - Caddyfile format
+  - `yaml` - YAML format (if installed)
+</ParamField>
+
+<ParamField path="--pretty" type="boolean" default="false">
+  Format the output with indentation for human readability.
+  
+  Without this flag, output is compact JSON on a single line.
+</ParamField>
+
+<ParamField path="--validate" type="boolean" default="false">
+  Validate the adapted config.
+  
+  If the config is invalid, an error will be printed to stderr and a non-zero exit status will be returned.
+</ParamField>
+
+<ParamField path="--envfile" type="string[]" default="[]">
+  Environment file(s) to load in KEY=VALUE format.
+  
+  Useful if your config references environment variables.
+</ParamField>
+
+## Examples
+
+### Basic adaptation
+
+```bash
+caddy adapt --config Caddyfile
+```
+
+Outputs compact JSON to stdout.
+
+### Pretty-printed output
+
+```bash
+caddy adapt --config Caddyfile --pretty
+```
+
+Outputs formatted JSON:
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            ...
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### Adapt and validate
+
+```bash
+caddy adapt --config Caddyfile --validate
+```
+
+This ensures the adapted JSON config is valid before using it.
+
+### Adapt from stdin
+
+```bash
+cat Caddyfile | caddy adapt --config - --adapter caddyfile --pretty
+```
+
+### Save to file
+
+```bash
+caddy adapt --config Caddyfile --pretty > config.json
+```
+
+### Adapt with environment variables
+
+```bash
+caddy adapt --config Caddyfile --envfile .env --pretty
+```
+
+If your Caddyfile uses `{env.VARIABLE}`, the environment file will be loaded.
+
+### Adapt YAML config
+
+```bash
+caddy adapt --config caddy.yaml --adapter yaml --pretty
+```
+
+## Output
+
+The adapted JSON is written to **stdout**, and any warnings are written to **stderr**.
+
+<CodeGroup>
+
+```bash Input Caddyfile
+example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+```json Output JSON (--pretty)
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "localhost:8080"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+## Exit Codes
+
+- `0` - Success
+- `1` - Failed (adaptation error or validation error)
+
+## Warnings
+
+Warnings are printed to stderr with file location:
+
+```
+Caddyfile:10: some_directive: this is a warning message
+```
+
+Warnings don't cause the command to fail, but you should review them.
+
+## Validation
+
+With the `--validate` flag, the adapted config is:
+
+1. **Unmarshaled** into Go structs
+2. **Validated** by calling `Validate()` on all modules
+3. **Checked** for errors
+
+If validation fails:
+
+```
+Error: validation: field 'required_field' is required
+```
+
+<Note>
+Validation catches many errors but not all. Some errors only appear at runtime when the config is actually loaded.
+</Note>
+
+## Use Cases
+
+### 1. Preview before applying
+
+```bash
+# Preview the JSON
+caddy adapt --config Caddyfile --pretty
+
+# If it looks good, apply it
+caddy reload --config Caddyfile
+```
+
+### 2. Generate production JSON
+
+```bash
+# Generate and save
+caddy adapt --config Caddyfile --pretty --validate > /etc/caddy/config.json
+
+# Use in production
+caddy run --config /etc/caddy/config.json
+```
+
+### 3. Debug config issues
+
+```bash
+caddy adapt --config Caddyfile --pretty --validate 2>&1 | less
+```
+
+### 4. Learn JSON structure
+
+Write a simple Caddyfile feature, then adapt it to see the JSON equivalent:
+
+```bash
+echo 'localhost { respond "Hello" }' | caddy adapt --config - --pretty
+```
+
+### 5. CI/CD validation
+
+```bash
+#!/bin/bash
+if caddy adapt --config Caddyfile --validate; then
+    echo "Config is valid"
+else
+    echo "Config is invalid"
+    exit 1
+fi
+```
+
+## Related Commands
+
+- [`caddy validate`](/cli/validate) - Validate without adapting (if already JSON)
+- [`caddy reload`](/cli/reload) - Apply a config to running Caddy
+- [`caddy run`](/cli/run) - Start Caddy with a config

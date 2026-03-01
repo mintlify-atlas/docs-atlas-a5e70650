@@ -1,0 +1,303 @@
+---
+title: Serving Static Files
+description: Learn how to serve static files with Caddy's file server, including directory browsing, custom index files, and precompression support
+---
+
+# Serving Static Files
+
+Caddy's file server is a production-ready, high-performance module for serving static files. It includes automatic MIME type detection, directory browsing, precompressed file support, and more.
+
+## Basic File Server
+
+The simplest way to serve files from a directory:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":80"],
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "file_server",
+                  "root": "/var/www/html"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    root * /var/www/html
+    file_server
+}
+```
+</CodeGroup>
+
+## Configuration Options
+
+### Site Root
+
+The `root` directive specifies where your files are located. By default, it uses `{http.vars.root}` if set, or the current working directory.
+
+```caddyfile
+root * /var/www/html
+file_server
+```
+
+<Note>
+  The site root is not a sandbox. Files and symlinks within the root can be accessed directly based on the request path.
+</Note>
+
+### Custom Index Files
+
+By default, Caddy looks for `index.html` and `index.txt`. You can customize this:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "root": "/var/www",
+  "index_names": ["index.html", "index.htm", "default.html"]
+}
+```
+
+```caddyfile Caddyfile
+file_server {
+    root /var/www
+    index index.html index.htm default.html
+}
+```
+</CodeGroup>
+
+## Directory Browsing
+
+Enable directory browsing to show file listings when no index file is present:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "root": "/var/www",
+  "browse": {
+    "sort": ["namedirfirst", "asc"],
+    "file_limit": 1000
+  }
+}
+```
+
+```caddyfile Caddyfile
+file_server browse {
+    root /var/www
+}
+
+# Or with options
+file_server {
+    browse {
+        sort namedirfirst asc
+        file_limit 1000
+        reveal_symlinks
+    }
+}
+```
+</CodeGroup>
+
+### Browse Sorting Options
+
+- **sort_by**: `name` (default), `namedirfirst`, `size`, `time`
+- **order**: `asc` (default), `desc`
+
+### JSON API
+
+When the `Accept` header includes `application/json`, the browse endpoint returns JSON:
+
+```json
+[
+  {
+    "name": "file.txt",
+    "size": 1024,
+    "url": "file.txt",
+    "mod_time": "2024-01-15T10:30:00Z",
+    "mode": 420,
+    "is_dir": false,
+    "is_symlink": false
+  }
+]
+```
+
+## Hiding Files
+
+Prevent certain files from being served:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "hide": ["*.env", ".git", "config.yml"]
+}
+```
+
+```caddyfile Caddyfile
+file_server {
+    hide .git *.env config.yml
+}
+```
+</CodeGroup>
+
+<Tip>
+  Patterns without a path separator match any file or directory with that name. Use paths like `./hidden` to hide only a specific file.
+</Tip>
+
+## Precompressed Files
+
+Serve precompressed `.br`, `.zstd`, or `.gz` files automatically:
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "file_server",
+  "precompressed": {
+    "br": {},
+    "gzip": {},
+    "zstd": {}
+  },
+  "precompressed_order": ["br", "zstd", "gzip"]
+}
+```
+
+```caddyfile Caddyfile
+file_server {
+    precompressed br zstd gzip
+}
+```
+</CodeGroup>
+
+<Steps>
+
+### How Precompression Works
+
+1. Client sends `Accept-Encoding: br, gzip`
+2. Caddy checks for `file.txt.br`, then `file.txt.gz`
+3. If found, serves the compressed version with appropriate `Content-Encoding` header
+4. Otherwise, serves the original `file.txt`
+
+</Steps>
+
+## Advanced Features
+
+### Pass-Through Mode
+
+If a file is not found, invoke the next handler instead of returning 404:
+
+```caddyfile
+file_server {
+    pass_thru
+}
+```
+
+### Custom Status Codes
+
+Override the response status code (useful for custom error pages):
+
+```caddyfile
+handle_errors {
+    rewrite * /error.html
+    file_server {
+        status {http.error.status_code}
+    }
+}
+```
+
+### ETag Headers
+
+Caddy automatically generates ETags using file modification time and size. You can also read ETags from sidecar files:
+
+```json
+{
+  "handler": "file_server",
+  "etag_file_extensions": [".etag"]
+}
+```
+
+### Canonical URIs
+
+By default, Caddy enforces trailing slashes for directories. Disable this:
+
+```caddyfile
+file_server {
+    disable_canonical_uris
+}
+```
+
+## Performance Considerations
+
+<Note>
+  The file server is zero-allocation and highly optimized. It properly handles:
+  - Range requests (for video streaming)
+  - If-Modified-Since / If-None-Match (304 responses)
+  - Content-Type based on file extension
+  - Automatic ETag generation
+</Note>
+
+## Security
+
+<Warning>
+  Caddy sanitizes paths using Go's `path.Clean()` to prevent directory traversal, but files within the root should be trusted. The file server does not implement access control beyond hiding files.
+</Warning>
+
+### Windows-Specific Protection
+
+On Windows, Caddy automatically rejects:
+- Alternate Data Streams (ADS) paths containing `:`
+- 8.3 short name paths containing `~`
+
+These protections prevent potential file hiding bypasses.
+
+## Complete Example
+
+```caddyfile
+example.com {
+    # Set the root directory
+    root * /var/www/html
+    
+    # Enable file server with all features
+    file_server {
+        # Custom index files
+        index index.html default.html
+        
+        # Hide sensitive files
+        hide .git .env* *.backup
+        
+        # Enable directory browsing
+        browse {
+            sort namedirfirst asc
+            file_limit 500
+        }
+        
+        # Serve precompressed files
+        precompressed br gzip
+    }
+    
+    # Set security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+    }
+}
+```
+
+## Related Modules
+
+- **templates**: Process HTML templates before serving
+- **encode**: Compress responses on-the-fly
+- **rewrite**: Modify request paths before serving files

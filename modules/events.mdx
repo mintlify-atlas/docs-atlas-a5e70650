@@ -1,0 +1,512 @@
+---
+title: Events Module
+description: Global eventing system for emitting and handling events across Caddy modules
+---
+
+<Warning>
+The events module is **EXPERIMENTAL** and subject to change. Pay close attention to release notes when upgrading.
+</Warning>
+
+The events module implements a global eventing system within Caddy. Modules can emit and subscribe to events, providing hooks into deep parts of the codebase that aren't otherwise accessible.
+
+## Overview
+
+Module ID: `events`
+
+The events system enables:
+- **Event emission** - Modules can broadcast events when important actions occur
+- **Event subscription** - Handlers can react to events from specific modules
+- **Event propagation** - Events bubble up the module tree (DOM-like)
+- **Flow control** - Handlers can abort event propagation
+- **Metadata passing** - Events carry data between emitters and handlers
+
+## Event Propagation
+
+Events propagate in a DOM-like fashion:
+
+```
+Event from module "a.b.c" triggers handlers listening to:
+1. "a.b.c" (origin)
+2. "a.b" (parent)
+3. "a" (grandparent)
+4. "" (all events)
+```
+
+This allows handlers to:
+- Listen to specific modules
+- Listen to entire namespaces
+- Catch all events globally
+
+## Configuration
+
+### Basic Structure
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "events": {
+      "subscriptions": [
+        {
+          "events": ["cert_obtained"],
+          "modules": ["tls"],
+          "handlers": [
+            {
+              "handler": "exec",
+              "command": "reload-service.sh"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+events {
+  on cert_obtained {
+    exec reload-service.sh
+  }
+}
+```
+</CodeGroup>
+
+## Subscriptions
+
+Subscriptions bind handlers to events.
+
+<ParamField path="events" type="array of strings">
+  Event name(s) to listen for. If empty or omitted, matches **all events**.
+  
+  Examples:
+  - `["cert_obtained"]` - Listen for certificate obtained events
+  - `["cert_obtained", "cert_renewed"]` - Multiple specific events
+  - `[]` - All events
+</ParamField>
+
+<ParamField path="modules" type="array of module IDs">
+  Module ID(s) or namespaces from which to receive events. If empty or omitted, matches **all modules**.
+  
+  Examples:
+  - `["tls"]` - All TLS events
+  - `["http.handlers.file_server"]` - Specific module
+  - `["http.handlers"]` - All HTTP handlers
+  - `[]` - All modules
+</ParamField>
+
+<ParamField path="handlers" type="array of objects" required>
+  Event handler modules that execute when events match. At least one handler is required.
+  
+  Handlers are invoked in an arbitrary order.
+</ParamField>
+
+### Subscription Examples
+
+#### Listen to All TLS Events
+
+```json
+{
+  "subscriptions": [
+    {
+      "modules": ["tls"],
+      "handlers": [
+        {
+          "handler": "exec",
+          "command": "log-tls-event.sh"
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Listen to Specific Event from Any Module
+
+```json
+{
+  "subscriptions": [
+    {
+      "events": ["cert_obtained"],
+      "handlers": [
+        {
+          "handler": "exec",
+          "command": "notify-cert-obtained.sh"
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Listen to All HTTP Handler Events
+
+```json
+{
+  "subscriptions": [
+    {
+      "modules": ["http.handlers"],
+      "events": ["request_received"],
+      "handlers": [
+        {
+          "handler": "log",
+          "level": "info"
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Catch-All Subscription
+
+```json
+{
+  "subscriptions": [
+    {
+      "handlers": [
+        {
+          "handler": "exec",
+          "command": "log-all-events.sh"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Event Handlers
+
+Event handlers implement the action to take when an event occurs.
+
+### Handler Interface
+
+```go
+type Handler interface {
+    Handle(context.Context, caddy.Event) error
+}
+```
+
+Handlers receive:
+- **Context** - Request context with cancellation
+- **Event** - Event data including name, origin, timestamp, and metadata
+
+Handlers can:
+- Read event data
+- Add metadata to the event
+- Return `caddy.ErrEventAborted` to stop propagation
+- Return other errors (logged but don't stop propagation)
+
+## Event Object
+
+Events contain:
+
+<ParamField path="id" type="UUID">
+  Unique identifier for this event occurrence
+</ParamField>
+
+<ParamField path="name" type="string">
+  Event name (e.g., `cert_obtained`)
+</ParamField>
+
+<ParamField path="timestamp" type="time.Time">
+  When the event was created
+</ParamField>
+
+<ParamField path="origin" type="Module">
+  The module that emitted the event
+</ParamField>
+
+<ParamField path="data" type="map[string]any">
+  Event-specific metadata. Not copied for efficiency; don't modify in other goroutines after emission.
+</ParamField>
+
+<ParamField path="aborted" type="error">
+  Set to `caddy.ErrEventAborted` if a handler aborted the event
+</ParamField>
+
+## Event Data in Replacer
+
+Event information is automatically available in the Caddy replacer:
+
+- `{event}` - The full event object
+- `{event.id}` - Event UUID
+- `{event.name}` - Event name
+- `{event.time}` - Event timestamp
+- `{event.time_unix}` - Unix timestamp in milliseconds
+- `{event.module}` - Origin module ID
+- `{event.data}` - Full data map
+- `{event.data.field_name}` - Specific field from event data
+
+Useful in handler configurations:
+
+```json
+{
+  "handler": "exec",
+  "command": "notify.sh",
+  "args": ["{event.name}", "{event.time}", "{event.data.domain}"]
+}
+```
+
+## Aborting Events
+
+Handlers can abort event propagation by returning `caddy.ErrEventAborted`:
+
+```go
+func (h MyHandler) Handle(ctx context.Context, e caddy.Event) error {
+    if shouldAbort(e) {
+        return caddy.ErrEventAborted
+    }
+    return nil
+}
+```
+
+When aborted:
+1. Event propagation **stops immediately**
+2. Event is marked as aborted
+3. Emitter receives the aborted event
+4. Emitter may choose to adjust program flow
+
+<Note>
+Not all event emitters support aborting. Check module documentation to see if aborting an event affects behavior.
+</Note>
+
+## Synchronous Execution
+
+Event handlers are fired **synchronously** as part of the regular program flow. This means:
+
+✅ **Benefits**:
+- Handlers can control program flow
+- Handlers can add data back to the origin module
+- Predictable execution order (within a subscription level)
+
+⚠️ **Cautions**:
+- Slow handlers block the emitter
+- Handlers should complete quickly
+- Long-running tasks should spawn goroutines
+
+## Handler Ordering
+
+<Warning>
+Event handlers are invoked in **arbitrary order** within each subscription level. Do not rely on handler execution order.
+</Warning>
+
+Handlers should:
+- Be independent of each other
+- Not rely on other handlers' logic
+- Be idempotent when possible
+
+## Programmatic Subscriptions
+
+Go code can subscribe to events during provisioning:
+
+```go
+func (m *MyModule) Provision(ctx caddy.Context) error {
+    eventsApp, err := ctx.App("events")
+    if err != nil {
+        return err
+    }
+    
+    events := eventsApp.(*caddyevents.App)
+    return events.On("cert_obtained", &myHandler{})
+}
+```
+
+### On() Method
+
+Syntactic sugar for simple subscriptions:
+
+```go
+func (app *App) On(eventName string, handler Handler) error
+```
+
+- `eventName` - Event to listen for (empty string = all events)
+- `handler` - Handler to invoke
+- Listens to events from **all modules**
+
+## Emitting Events
+
+Modules emit events using:
+
+```go
+func (app *App) Emit(ctx caddy.Context, eventName string, data map[string]any) caddy.Event
+```
+
+### Example Emission
+
+```go
+func (m *MyModule) DoSomething(ctx caddy.Context) error {
+    // Do work...
+    
+    // Emit event
+    eventsApp, _ := ctx.App("events")
+    if eventsApp != nil {
+        events := eventsApp.(*caddyevents.App)
+        e := events.Emit(ctx, "something_happened", map[string]any{
+            "status": "success",
+            "details": "Work completed",
+            "count": 42,
+        })
+        
+        // Check if aborted
+        if e.Aborted != nil {
+            // Adjust program flow
+            return e.Aborted
+        }
+    }
+    
+    return nil
+}
+```
+
+## Common Event Names
+
+While event names are module-specific, some common patterns:
+
+- `cert_obtained` - Certificate was obtained
+- `cert_renewed` - Certificate was renewed  
+- `cert_failed` - Certificate operation failed
+- `config_loaded` - Configuration loaded
+- `server_started` - Server started
+- `server_stopped` - Server stopped
+- `request_received` - HTTP request received
+- `response_sent` - HTTP response sent
+
+<Note>
+Check specific module documentation for available events.
+</Note>
+
+## Use Cases
+
+### Certificate Lifecycle Hooks
+
+```json
+{
+  "subscriptions": [
+    {
+      "events": ["cert_obtained", "cert_renewed"],
+      "modules": ["tls"],
+      "handlers": [
+        {
+          "handler": "exec",
+          "command": "systemctl",
+          "args": ["reload", "nginx"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Logging Events
+
+```json
+{
+  "subscriptions": [
+    {
+      "events": ["cert_failed"],
+      "handlers": [
+        {
+          "handler": "log",
+          "level": "error",
+          "message": "Certificate operation failed for {event.data.domain}"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Webhooks
+
+```json
+{
+  "subscriptions": [
+    {
+      "events": ["cert_obtained"],
+      "handlers": [
+        {
+          "handler": "webhook",
+          "url": "https://hooks.example.com/cert-obtained",
+          "method": "POST"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Metrics Collection
+
+```json
+{
+  "subscriptions": [
+    {
+      "modules": ["http"],
+      "handlers": [
+        {
+          "handler": "metrics",
+          "prometheus_endpoint": "localhost:9090"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Best Practices
+
+1. **Keep handlers fast** - Spawn goroutines for long-running work
+2. **Handle errors gracefully** - Don't crash on event handling errors
+3. **Be specific** - Subscribe to specific events/modules when possible
+4. **Don't modify shared state** - Event data map is shared; don't mutate it
+5. **Test abort behavior** - Ensure aborting events works as expected
+6. **Log appropriately** - Use structured logging in handlers
+
+## Troubleshooting
+
+### Handlers Not Firing
+
+**Problem**: Event handlers aren't being invoked
+
+**Solutions**:
+- Verify event name matches exactly
+- Check module ID is correct
+- Ensure subscription is in `apps.events.subscriptions`
+- Enable debug logging to see event emissions
+
+### Event Storms
+
+**Problem**: Too many events causing performance issues
+
+**Solutions**:
+- Be more specific in subscriptions
+- Add filtering in handlers
+- Avoid emitting events in tight loops
+
+### Context Cancellation
+
+**Problem**: `context canceled` errors in handlers
+
+**Solutions**:
+- Check for context cancellation in long-running handlers
+- Respect context deadlines
+- Don't block indefinitely
+
+## Security Considerations
+
+- **Handler execution is synchronous** - Malicious handlers can block operations
+- **Event data is shared** - Don't include secrets in event data
+- **Handlers run with Caddy's privileges** - Be cautious with exec handlers
+- **No sandboxing** - Handlers have full access to Caddy's internals
+
+## Future Development
+
+<Warning>
+As an experimental feature, the events module may change significantly. Possible future additions:
+- Asynchronous event handling
+- Event filtering/transformation
+- Event persistence
+- Remote event emission
+- Event replay
+</Warning>

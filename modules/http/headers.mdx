@@ -1,0 +1,418 @@
+---
+title: Headers
+description: Manipulate HTTP request and response headers
+---
+
+The headers module is a middleware which modifies request and response headers. It provides precise control over header manipulation with support for adding, setting, deleting, and replacing header values.
+
+**Module ID:** `http.handlers.headers`
+
+## Overview
+
+Changes to headers are applied immediately, except for response headers when `deferred` is true or when `require` is set. In those cases, changes are applied when headers are written to the response.
+
+<Note type="warning">
+Deferred changes do not take effect if an error occurs later in the middleware chain.
+</Note>
+
+All properties in this module accept placeholders.
+
+## Configuration
+
+<ParamField path="request" type="object">
+  Header operations to apply to the request.
+  
+  See [Header Operations](#header-operations) for available fields.
+</ParamField>
+
+<ParamField path="response" type="object">
+  Header operations to apply to the response.
+  
+  <ResponseField name="require" type="object">
+    If set, header operations will only be performed if the response matches these criteria. This is a response matcher.
+    
+    ```json
+    "require": {
+      "status_code": [200, 201],
+      "headers": {
+        "Content-Type": ["text/html*"]
+      }
+    }
+    ```
+  </ResponseField>
+  
+  <ResponseField name="deferred" type="boolean" default="false">
+    If true, header operations will be deferred until they are written out. Usually needed when deleting headers.
+    
+    Superseded if `require` is set.
+  </ResponseField>
+  
+  See [Header Operations](#header-operations) for other available fields.
+</ParamField>
+
+## Header Operations
+
+<ParamField path="add" type="object">
+  Adds HTTP headers. Does not replace any existing header fields.
+  
+  ```json
+  "add": {
+    "X-Custom-Header": ["value1", "value2"],
+    "X-Request-ID": ["{http.request.uuid}"]
+  }
+  ```
+</ParamField>
+
+<ParamField path="set" type="object">
+  Sets HTTP headers, replacing existing header fields.
+  
+  ```json
+  "set": {
+    "X-Server": ["Caddy"],
+    "Cache-Control": ["public", "max-age=3600"]
+  }
+  ```
+</ParamField>
+
+<ParamField path="delete" type="array of strings">
+  Names of HTTP header fields to delete. Basic wildcards are supported:
+  
+  - Start with `*` for all field names with the given suffix
+  - End with `*` for all field names with the given prefix
+  - Start and end with `*` for all field names containing a substring
+  - `*` alone deletes all headers
+  
+  ```json
+  "delete": [
+    "X-Debug-*",      // Deletes X-Debug-Foo, X-Debug-Bar, etc.
+    "*-Temp",         // Deletes X-Temp, Y-Temp, etc.
+    "*Cache*",        // Deletes X-Cache-Control, Cache-Data, etc.
+    "Server"          // Deletes Server header
+  ]
+  ```
+</ParamField>
+
+<ParamField path="replace" type="object">
+  Performs in-situ substring replacements of HTTP headers.
+  
+  Keys are field names on which to perform the associated replacements. If the field name is `*`, replacements are performed on all header fields.
+  
+  Each field name maps to an array of replacement operations.
+  
+  <ResponseField name="search" type="string">
+    The substring to search for.
+  </ResponseField>
+  
+  <ResponseField name="search_regexp" type="string">
+    The regular expression to search with.
+  </ResponseField>
+  
+  <ResponseField name="replace" type="string">
+    The string with which to replace matches.
+  </ResponseField>
+  
+  <Note>
+    Cannot specify both `search` and `search_regexp` for the same replacement.
+  </Note>
+  
+  ```json
+  "replace": {
+    "Location": [
+      {
+        "search": "http://",
+        "replace": "https://"
+      }
+    ],
+    "*": [
+      {
+        "search_regexp": "(?i)secret[0-9]+",
+        "replace": "[REDACTED]"
+      }
+    ]
+  }
+  ```
+</ParamField>
+
+## Configuration Examples
+
+### Add Security Headers
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "headers",
+  "response": {
+    "set": {
+      "X-Content-Type-Options": ["nosniff"],
+      "X-Frame-Options": ["DENY"],
+      "X-XSS-Protection": ["1; mode=block"],
+      "Strict-Transport-Security": ["max-age=31536000; includeSubDomains; preload"]
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+header {
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    X-XSS-Protection "1; mode=block"
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}
+```
+</CodeGroup>
+
+### Remove Server Headers
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "headers",
+  "response": {
+    "delete": ["Server", "X-Powered-By"]
+  }
+}
+```
+
+```caddyfile Caddyfile
+header {
+    -Server
+    -X-Powered-By
+}
+```
+</CodeGroup>
+
+### Add CORS Headers
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "headers",
+  "response": {
+    "set": {
+      "Access-Control-Allow-Origin": ["*"],
+      "Access-Control-Allow-Methods": ["GET, POST, PUT, DELETE, OPTIONS"],
+      "Access-Control-Allow-Headers": ["Content-Type, Authorization"]
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+header {
+    Access-Control-Allow-Origin "*"
+    Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    Access-Control-Allow-Headers "Content-Type, Authorization"
+}
+```
+</CodeGroup>
+
+### Conditional Response Headers
+
+```json
+{
+  "handler": "headers",
+  "response": {
+    "require": {
+      "status_code": [200]
+    },
+    "set": {
+      "Cache-Control": ["public, max-age=3600"]
+    }
+  }
+}
+```
+
+### Request Headers with Placeholders
+
+```json
+{
+  "handler": "headers",
+  "request": {
+    "set": {
+      "X-Real-IP": ["{http.request.remote.host}"],
+      "X-Request-ID": ["{http.request.uuid}"],
+      "X-Forwarded-Method": ["{http.request.method}"]
+    }
+  }
+}
+```
+
+### Replace Header Values
+
+```json
+{
+  "handler": "headers",
+  "response": {
+    "replace": {
+      "Location": [
+        {
+          "search": "http://backend.local",
+          "replace": "https://example.com"
+        }
+      ]
+    }
+  }
+}
+```
+
+### Delete Headers by Pattern
+
+```json
+{
+  "handler": "headers",
+  "response": {
+    "delete": [
+      "X-Debug-*",
+      "*-Internal",
+      "*Temp*"
+    ]
+  }
+}
+```
+
+### Deferred Header Operations
+
+```json
+{
+  "handler": "headers",
+  "response": {
+    "deferred": true,
+    "delete": ["Content-Length"],
+    "set": {
+      "Transfer-Encoding": ["chunked"]
+    }
+  }
+}
+```
+
+## Special Header Handling
+
+### Host Header
+
+The `Host` header is handled specially for requests:
+
+```json
+{
+  "request": {
+    "set": {
+      "Host": ["example.com"]
+    }
+  }
+}
+```
+
+This modifies `r.Host` directly, as the standard library does not include Host in the header map.
+
+### Multiple Values
+
+Headers can have multiple values. When setting headers with multiple values:
+
+```json
+{
+  "set": {
+    "Cache-Control": ["public", "max-age=3600"]
+  }
+}
+```
+
+This creates: `Cache-Control: public, max-age=3600`
+
+## Regular Expression Support
+
+Regular expressions in replacements support placeholders and are compiled at runtime if they contain placeholders:
+
+```json
+{
+  "replace": {
+    "Location": [
+      {
+        "search_regexp": "^http://({http.request.host})",
+        "replace": "https://$1"
+      }
+    ]
+  }
+}
+```
+
+If the regexp doesn't contain placeholders, it's precompiled at provision time for better performance.
+
+## Response Matcher
+
+When using `require`, you can match on:
+
+- **status_code** - Array of status codes or code classes (2xx, 3xx, etc.)
+- **headers** - Header field matchers
+
+```json
+{
+  "require": {
+    "status_code": [200, 201, 204],
+    "headers": {
+      "Content-Type": ["application/json*"]
+    }
+  }
+}
+```
+
+## Common Use Cases
+
+### Security Headers
+
+Add comprehensive security headers:
+
+```caddyfile
+header {
+    # Prevent MIME type sniffing
+    X-Content-Type-Options "nosniff"
+    
+    # Prevent clickjacking
+    X-Frame-Options "DENY"
+    
+    # Enable browser XSS protection
+    X-XSS-Protection "1; mode=block"
+    
+    # HSTS
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    
+    # Content Security Policy
+    Content-Security-Policy "default-src 'self'"
+    
+    # Referrer Policy
+    Referrer-Policy "strict-origin-when-cross-origin"
+}
+```
+
+### Caching Headers
+
+```json
+{
+  "response": {
+    "require": {
+      "status_code": [200]
+    },
+    "set": {
+      "Cache-Control": ["public, max-age=86400"],
+      "Vary": ["Accept-Encoding"]
+    }
+  }
+}
+```
+
+### API Gateway Headers
+
+```json
+{
+  "request": {
+    "set": {
+      "X-Forwarded-User": ["{http.auth.user.id}"],
+      "X-API-Key": ["secret-key"]
+    },
+    "delete": ["Authorization"]
+  }
+}
+```
+
+<Note>
+Header operations are performed in order: delete all (`*`), add, set, delete (specific), replace. This ensures predictable behavior when combining multiple operations.
+</Note>

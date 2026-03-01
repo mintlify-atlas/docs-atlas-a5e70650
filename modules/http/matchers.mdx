@@ -1,0 +1,341 @@
+---
+title: Request Matchers
+description: HTTP request matching criteria for routing
+---
+
+Request matchers determine which requests a route will handle. A route can have multiple matcher sets, and each set can contain multiple matchers. Matchers within a set are AND'ed together, while matcher sets are OR'ed.
+
+## Matcher Interface
+
+Matchers implement the `RequestMatcherWithError` interface:
+
+```go
+type RequestMatcherWithError interface {
+    MatchWithError(*http.Request) (bool, error)
+}
+```
+
+<Note>
+Matchers MUST NOT modify the request, with the only exception being its context.
+</Note>
+
+## Matcher Sets
+
+A matcher set is a group of matchers that must all match (AND logic):
+
+```json
+{
+  "match": [
+    {
+      "host": ["example.com"],
+      "path": ["/api/*"]
+    }
+  ]
+}
+```
+
+Multiple matcher sets are OR'ed together:
+
+```json
+{
+  "match": [
+    {"host": ["example.com"]},
+    {"path": ["/public/*"]}
+  ]
+}
+```
+
+This matches requests to `example.com` OR requests to `/public/*` on any host.
+
+## Host Matcher
+
+**Module ID:** `http.matchers.host`
+
+<ParamField path="host" type="array of strings">
+  Matches requests by the Host header value (case-insensitive).
+  
+  When used in a top-level HTTP route, qualifying domain names may trigger automatic HTTPS, which automatically provisions and renews certificates.
+  
+  Wildcards (`*`) may be used to represent exactly one label of the hostname:
+  - `*` matches `localhost` or `internal` but not `example.com`
+  - `*.example.com` matches `foo.example.com` but not `foo.bar.example.com`
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "match": [{
+    "host": ["example.com", "*.example.com"]
+  }]
+}
+```
+
+```caddyfile Caddyfile
+@api host example.com *.example.com
+```
+</CodeGroup>
+
+## Path Matcher
+
+**Module ID:** `http.matchers.path`
+
+<ParamField path="path" type="array of strings">
+  Case-insensitive exact path matching (not prefix-based). Wildcards (`*`) supported:
+  
+  - `/prefix/*` - Prefix match
+  - `*.suffix` - Suffix match  
+  - `*/contains/*` - Substring match
+  - `/accounts/*/info` - Globular match
+  
+  Path matching is done in unescaped space. Escape sequences in patterns are compared with the request's raw/escaped path.
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "match": [{
+    "path": ["/api/*", "*.json"]
+  }]
+}
+```
+
+```caddyfile Caddyfile
+@api path /api/* *.json
+```
+</CodeGroup>
+
+## Path Regexp Matcher
+
+**Module ID:** `http.matchers.path_regexp`
+
+<ParamField path="path_regexp" type="object">
+  Matches requests using a regular expression on the URI path.
+  
+  <ResponseField name="name" type="string">
+    Optional unique name for this regexp. Used in placeholder names.
+  </ResponseField>
+  
+  <ResponseField name="pattern" type="string">
+    The regular expression in RE2 syntax.
+  </ResponseField>
+  
+  Upon match, adds placeholders:
+  - `{http.regexp.name.capture_group}`
+  - `{http.regexp.capture_group}` (if no name)
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "match": [{
+    "path_regexp": {
+      "name": "api_version",
+      "pattern": "^/api/v([0-9]+)/"
+    }
+  }]
+}
+```
+
+```caddyfile Caddyfile
+@api path_regexp api_version ^/api/v([0-9]+)/
+```
+</CodeGroup>
+
+## Method Matcher
+
+**Module ID:** `http.matchers.method`
+
+<ParamField path="method" type="array of strings">
+  Matches requests by HTTP method (GET, POST, PUT, DELETE, etc.).
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "match": [{
+    "method": ["GET", "POST"]
+  }]
+}
+```
+
+```caddyfile Caddyfile
+@write method POST PUT PATCH DELETE
+```
+</CodeGroup>
+
+## Query Matcher
+
+**Module ID:** `http.matchers.query`
+
+<ParamField path="query" type="object">
+  Matches requests by URI query string. Keys are exact, values support wildcards.
+  
+  ```json
+  {
+    "query": {
+      "key": ["value"],
+      "topic": ["api"],
+      "debug": ["*"]
+    }
+  }
+  ```
+  
+  <Note type="warning">
+    Query string values are arrays because repeated keys are valid. The matcher succeeds if any configured value matches.
+  </Note>
+</ParamField>
+
+## Header Matcher
+
+**Module ID:** `http.matchers.header`
+
+<ParamField path="header" type="object">
+  Matches requests by header fields. Performs fast, exact string comparisons. Wildcards supported for prefix/suffix/substring matching.
+  
+  - `null` value - header must not exist
+  - Empty array - header must exist (any value)
+  - Array of values - match if any value matches
+  
+  ```json
+  {
+    "header": {
+      "Content-Type": ["application/json"],
+      "X-Custom-*": ["*"]
+    }
+  }
+  ```
+</ParamField>
+
+## Header Regexp Matcher
+
+**Module ID:** `http.matchers.header_regexp`
+
+<ParamField path="header_regexp" type="object">
+  Matches requests using regular expressions on header fields.
+  
+  Keys are header field names, values are `MatchRegexp` objects with `name` and `pattern` fields.
+  
+  Adds placeholders like `{http.regexp.name.capture_group}`.
+</ParamField>
+
+## Protocol Matcher
+
+**Module ID:** `http.matchers.protocol`
+
+<ParamField path="protocol" type="string">
+  Matches requests by protocol. Recognized values:
+  
+  - `http` - HTTP (not HTTPS)
+  - `https` - HTTPS
+  - `grpc` - gRPC (Content-Type: application/grpc)
+  - `http/1`, `http/1.1` - Specific HTTP versions
+  - `http/2`, `http/3` - HTTP/2 or HTTP/3
+  - `http/2+` - HTTP/2 or later
+</ParamField>
+
+## TLS Matcher
+
+**Module ID:** `http.matchers.tls`
+
+<ParamField path="tls" type="object">
+  Matches HTTP requests based on the underlying TLS connection state.
+  
+  <ResponseField name="handshake_complete" type="boolean">
+    Matches if the TLS handshake has completed. QUIC 0-RTT early data may arrive before handshake completion.
+  </ResponseField>
+  
+  If this matcher is specified but the request didn't come over TLS, it will never match.
+</ParamField>
+
+## Not Matcher
+
+**Module ID:** `http.matchers.not`
+
+<ParamField path="not" type="array">
+  Matches requests by negating the results of its matcher sets. Each matcher set is OR'ed.
+  
+  Structure is an array of matcher set objects:
+  
+  ```json
+  {
+    "not": [
+      {"path": ["/admin/*"]},
+      {"remote_ip": ["192.168.0.0/16"]}
+    ]
+  }
+  ```
+  
+  This matches if the path is NOT `/admin/*` AND the IP is NOT in `192.168.0.0/16`.
+</ParamField>
+
+## Remote IP Matcher
+
+**Module ID:** `http.matchers.remote_ip`
+
+Matches requests by the client's IP address. Supports CIDR notation and IP ranges.
+
+## File Matcher
+
+**Module ID:** `http.matchers.file`
+
+Matches requests if the requested file exists on the filesystem.
+
+## Expression Matcher
+
+**Module ID:** `http.matchers.expression`
+
+Matches requests using CEL (Common Expression Language) expressions. Provides access to all request properties and Caddy placeholders.
+
+```caddyfile
+@complex expression {path}.startsWith('/api') && {method} in ['GET', 'POST']
+```
+
+## Configuration Examples
+
+### Multiple Matchers (AND)
+
+```json
+{
+  "match": [{
+    "host": ["example.com"],
+    "path": ["/api/*"],
+    "method": ["GET", "POST"]
+  }]
+}
+```
+
+Matches only if ALL conditions are true.
+
+### Multiple Matcher Sets (OR)
+
+```json
+{
+  "match": [
+    {"host": ["example.com"]},
+    {"path": ["/public/*"]},
+    {"remote_ip": ["10.0.0.0/8"]}
+  ]
+}
+```
+
+Matches if ANY condition is true.
+
+### Complex Matching
+
+```json
+{
+  "match": [
+    {
+      "host": ["api.example.com"],
+      "path": ["/v1/*"],
+      "not": [{"path": ["/v1/health"]}]
+    }
+  ]
+}
+```
+
+Matches `api.example.com/v1/*` but NOT `/v1/health`.
+
+<Note>
+For large host lists (>100), Caddy optimizes matching using binary search for exact matches and linear search for wildcards.
+</Note>

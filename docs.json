@@ -1,122 +1,152 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Caddy",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#1f88e5",
+    "light": "#4ba3f5",
+    "dark": "#0d5a9f"
   },
   "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/caddyserver/caddy"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/caddyserver/caddy",
+      "x": "https://x.com/caddyserver"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "install"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/architecture",
+              "concepts/modules",
+              "concepts/config-adapters",
+              "concepts/automatic-https"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Configuration",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "config/caddyfile",
+              "config/json",
+              "config/structure"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/static-files",
+              "guides/reverse-proxy",
+              "guides/https",
+              "guides/api",
+              "guides/logging",
+              "guides/metrics"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "CLI Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Commands",
             "pages": [
-              "api-reference/introduction"
+              "cli/run",
+              "cli/start",
+              "cli/stop",
+              "cli/reload",
+              "cli/adapt",
+              "cli/validate",
+              "cli/version",
+              "cli/list-modules",
+              "cli/environ",
+              "cli/storage"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Modules",
+        "groups": [
+          {
+            "group": "HTTP",
+            "pages": [
+              "modules/http/server",
+              "modules/http/handlers",
+              "modules/http/matchers",
+              "modules/http/reverse-proxy",
+              "modules/http/file-server",
+              "modules/http/templates",
+              "modules/http/rewrite",
+              "modules/http/headers"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "TLS",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "modules/tls/automation",
+              "modules/tls/issuers",
+              "modules/tls/connection-policy",
+              "modules/tls/certificates"
+            ]
+          },
+          {
+            "group": "Other Modules",
+            "pages": [
+              "modules/logging",
+              "modules/pki",
+              "modules/storage",
+              "modules/events"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developer Guide",
+        "groups": [
+          {
+            "group": "Extending Caddy",
+            "pages": [
+              "dev/module-development",
+              "dev/plugin-tutorial",
+              "dev/module-namespaces"
+            ]
+          },
+          {
+            "group": "Building",
+            "pages": [
+              "dev/building",
+              "dev/xcaddy",
+              "dev/custom-builds"
+            ]
+          },
+          {
+            "group": "Contributing",
+            "pages": [
+              "dev/contributing",
+              "dev/testing"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

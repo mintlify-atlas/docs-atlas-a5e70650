@@ -1,0 +1,514 @@
+---
+title: Logging Configuration
+description: Configure structured logging in Caddy with custom outputs, formats, and filtering for optimal observability
+---
+
+# Logging Configuration
+
+Caddy provides zero-allocation, high-performance structured logging using Zap. Logs can be customized with different outputs, encoders, and filters.
+
+## Default Logging
+
+By default, Caddy logs to stderr at INFO level:
+
+```bash
+2024/01/15 10:30:00.123 [INFO] http.log.access handled request
+```
+
+## Log Configuration
+
+### Custom Log Output
+
+<CodeGroup>
+```json JSON
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "writer": {
+          "output": "file",
+          "filename": "/var/log/caddy/access.log"
+        },
+        "encoder": {
+          "format": "json"
+        },
+        "level": "INFO"
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+{
+    log {
+        output file /var/log/caddy/access.log
+        format json
+        level INFO
+    }
+}
+```
+</CodeGroup>
+
+## Log Levels
+
+Available log levels (from most to least verbose):
+
+- **DEBUG** - Detailed debugging information
+- **INFO** - General informational messages (default)
+- **WARN** - Warning messages
+- **ERROR** - Error messages
+- **PANIC** - Panic messages (causes panic)
+- **FATAL** - Fatal messages (causes exit)
+
+```caddyfile
+{
+    log {
+        level DEBUG
+    }
+}
+```
+
+<Tip>
+  Use environment variables for dynamic log levels: `level {$LOG_LEVEL}`
+</Tip>
+
+## Log Encoders
+
+### JSON Encoder
+
+Structured JSON output:
+
+```json
+{
+  "level": "info",
+  "ts": 1705318200.123,
+  "logger": "http.log.access",
+  "msg": "handled request",
+  "request": {
+    "method": "GET",
+    "uri": "/index.html",
+    "proto": "HTTP/2.0"
+  },
+  "duration": 0.123,
+  "size": 4096,
+  "status": 200
+}
+```
+
+### Console Encoder
+
+Human-readable output:
+
+```
+2024-01-15T10:30:00.123Z  INFO  http.log.access  handled request
+```
+
+### Custom Format
+
+<CodeGroup>
+```json JSON
+{
+  "encoder": {
+    "format": "console",
+    "time_format": "2006/01/02 15:04:05.000",
+    "level_format": "color",
+    "message_key": "msg",
+    "time_key": "ts"
+  }
+}
+```
+
+```caddyfile Caddyfile
+log {
+    format console {
+        time_format "2006/01/02 15:04:05"
+        level_format color
+    }
+}
+```
+</CodeGroup>
+
+## Log Writers
+
+### File Writer
+
+```json
+{
+  "writer": {
+    "output": "file",
+    "filename": "/var/log/caddy/access.log",
+    "roll": true,
+    "roll_size_mb": 100,
+    "roll_keep": 10,
+    "roll_keep_days": 90
+  }
+}
+```
+
+### Network Writer
+
+Send logs over the network:
+
+```json
+{
+  "writer": {
+    "output": "net",
+    "address": "localhost:5140",
+    "dial_timeout": "10s"
+  }
+}
+```
+
+### Standard Streams
+
+```caddyfile
+{
+    log {
+        output stdout  # or stderr (default)
+    }
+}
+```
+
+### Discard
+
+Disable logging:
+
+```caddyfile
+{
+    log {
+        output discard
+    }
+}
+```
+
+## Log Filtering
+
+### Include Specific Modules
+
+Only log from specific modules:
+
+<CodeGroup>
+```json JSON
+{
+  "logs": {
+    "admin_only": {
+      "include": ["admin.api", "admin"]
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+log admin_only {
+    include admin.api admin
+}
+```
+</CodeGroup>
+
+### Exclude Modules
+
+Filter out specific modules:
+
+```json
+{
+  "logs": {
+    "no_access": {
+      "exclude": ["http.log.access"]
+    }
+  }
+}
+```
+
+### Complex Filtering
+
+Combine include and exclude:
+
+```json
+{
+  "logs": {
+    "http_without_access": {
+      "include": ["http"],
+      "exclude": ["http.log.access"],
+      "level": "WARN"
+    }
+  }
+}
+```
+
+<Note>
+  When both include and exclude are set, longer namespaces have priority. The lists must be mutually exclusive superset/subset pairs.
+</Note>
+
+## HTTP Access Logs
+
+Configure access logs per site:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "logs": {
+            "logger_names": {
+              "example.com": "example_log"
+            }
+          }
+        }
+      }
+    }
+  },
+  "logging": {
+    "logs": {
+      "example_log": {
+        "writer": {
+          "output": "file",
+          "filename": "/var/log/caddy/example.com.log"
+        },
+        "encoder": {
+          "format": "json"
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    log {
+        output file /var/log/caddy/example.com.log {
+            roll_size 100mb
+            roll_keep 10
+        }
+        format json
+    }
+}
+```
+</CodeGroup>
+
+### Access Log Fields
+
+Customize which fields to log:
+
+```caddyfile
+example.com {
+    log {
+        format filter {
+            wrap json
+            fields {
+                request>remote_ip ip
+                request>proto delete
+                common_log delete
+            }
+        }
+    }
+}
+```
+
+## Sampling
+
+Reduce log volume on high-traffic servers:
+
+<CodeGroup>
+```json JSON
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "sampling": {
+          "interval": "1s",
+          "first": 100,
+          "thereafter": 100
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+log {
+    sampling {
+        interval 1s
+        first 100
+        thereafter 100
+    }
+}
+```
+</CodeGroup>
+
+<Tip>
+  Sampling logs the first N entries per interval, then 1 in M thereafter. This drastically reduces log volume while preserving representative samples.
+</Tip>
+
+## Caller Information
+
+Include file and line numbers in logs:
+
+```json
+{
+  "logs": {
+    "debug_log": {
+      "level": "DEBUG",
+      "with_caller": true,
+      "with_caller_skip": 0,
+      "with_stacktrace": "ERROR"
+    }
+  }
+}
+```
+
+## Multiple Logs
+
+Configure different logs for different purposes:
+
+```caddyfile
+{
+    # Access logs
+    log access {
+        include http.log.access
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 10
+        }
+        format json
+    }
+    
+    # Error logs only
+    log errors {
+        include http
+        exclude http.log.access
+        output file /var/log/caddy/errors.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        level ERROR
+        format json
+    }
+    
+    # Admin logs
+    log admin {
+        include admin
+        output file /var/log/caddy/admin.log
+        level INFO
+    }
+}
+```
+
+## Sink Log
+
+Configure the sink for stdlib logger output:
+
+```json
+{
+  "logging": {
+    "sink": {
+      "writer": {
+        "output": "file",
+        "filename": "/var/log/caddy/sink.log"
+      }
+    }
+  }
+}
+```
+
+<Note>
+  The sink captures logs from Go's standard library logger, used by dependencies not built specifically for Caddy.
+</Note>
+
+## Complete Example
+
+```caddyfile
+{
+    # Default log (stderr, console format for development)
+    log {
+        output stdout
+        format console {
+            time_format "2006/01/02 15:04:05"
+            level_format color
+        }
+        level DEBUG
+    }
+    
+    # Production access logs
+    log access {
+        include http.log.access
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 10
+            roll_keep_days 90
+        }
+        format json
+        level INFO
+    }
+    
+    # Error logs with stack traces
+    log errors {
+        include http
+        exclude http.log.access
+        output file /var/log/caddy/errors.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+        level ERROR
+        with_stacktrace ERROR
+    }
+    
+    # Admin API logs
+    log admin {
+        include admin
+        output file /var/log/caddy/admin.log
+        format json
+    }
+}
+
+# Per-site access logging
+example.com {
+    log {
+        output file /var/log/caddy/sites/example.com.log {
+            roll_size 50mb
+            roll_keep 7
+        }
+        format json
+    }
+    
+    reverse_proxy backend:8080
+}
+```
+
+## Log Module Names
+
+Common logger names for filtering:
+
+- `http` - All HTTP-related logs
+- `http.log.access` - HTTP access logs
+- `http.handlers.*` - HTTP handler logs
+- `http.handlers.reverse_proxy` - Reverse proxy logs
+- `http.handlers.file_server` - File server logs
+- `admin` - Admin endpoint logs
+- `admin.api` - Admin API logs
+- `tls` - TLS/certificate logs
+- `tls.issuance` - Certificate issuance logs
+
+## Best Practices
+
+<Steps>
+
+### Logging Guidelines
+
+1. **Use JSON in production** - Easier to parse and analyze
+2. **Implement log rotation** - Prevent disk space issues  
+3. **Set appropriate levels** - DEBUG for development, INFO for production
+4. **Filter by module** - Separate access logs from errors
+5. **Enable sampling** - On high-traffic servers to reduce volume
+6. **Monitor log sizes** - Set up alerts for unusual growth
+
+</Steps>
+
+<Warning>
+  Verbose logging (DEBUG level) can impact performance and generate large volumes of logs. Use sparingly in production.
+</Warning>

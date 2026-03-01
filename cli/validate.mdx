@@ -1,0 +1,288 @@
+---
+title: caddy validate
+description: Validate a Caddy configuration file for errors
+---
+
+The `caddy validate` command tests whether a configuration file is valid by loading and provisioning it.
+
+## Usage
+
+```bash
+caddy validate --config <path> [flags]
+```
+
+## Description
+
+Loads and provisions the provided config, but does not start running it. This reveals any errors with the configuration through the loading and provisioning stages.
+
+This is useful for:
+- **Testing configs** before deploying
+- **CI/CD pipelines** to validate PRs
+- **Pre-flight checks** before reloading
+- **Catching errors early** without affecting running instances
+
+<Note>
+Validation loads the config and provisions all modules, but some errors may only appear at runtime (e.g., network binding issues).
+</Note>
+
+## Flags
+
+<ParamField path="--config" type="string" required>
+  Input configuration file to validate.
+  
+  Can be in any format supported by an adapter.
+</ParamField>
+
+<ParamField path="--adapter" type="string" default="">
+  Name of config adapter to apply.
+  
+  Required if the config is not in JSON format. Common adapters:
+  - `caddyfile`
+  - `yaml` (if installed)
+</ParamField>
+
+<ParamField path="--envfile" type="string[]" default="[]">
+  Environment file(s) to load in KEY=VALUE format.
+  
+  Useful if your config references environment variables.
+</ParamField>
+
+## Examples
+
+### Validate a Caddyfile
+
+```bash
+caddy validate --config Caddyfile
+```
+
+If valid, outputs:
+
+```
+Valid configuration
+```
+
+### Validate a JSON config
+
+```bash
+caddy validate --config config.json
+```
+
+### Validate with explicit adapter
+
+```bash
+caddy validate --config Caddyfile --adapter caddyfile
+```
+
+### Validate with environment file
+
+```bash
+caddy validate --config Caddyfile --envfile .env
+```
+
+If your config uses `{env.VARIABLE}`, the environment file will be loaded first.
+
+### Validate in CI/CD
+
+```bash
+#!/bin/bash
+if caddy validate --config Caddyfile; then
+    echo "✓ Config is valid"
+    exit 0
+else
+    echo "✗ Config is invalid"
+    exit 1
+fi
+```
+
+### Validate before reload
+
+```bash
+caddy validate --config Caddyfile && caddy reload --config Caddyfile
+```
+
+This ensures you only reload if the config is valid.
+
+## Exit Codes
+
+- `0` - Config is valid
+- `1` - Config is invalid or error occurred
+
+## Error Output
+
+If the config is invalid, you'll see detailed error messages:
+
+```bash
+$ caddy validate --config Caddyfile
+Error: adapting config using caddyfile: Caddyfile:5: unknown directive: invalid_directive
+```
+
+Or for JSON syntax errors:
+
+```bash
+$ caddy validate --config config.json
+Error: decoding config: invalid character '}' looking for beginning of value
+```
+
+Or for validation errors:
+
+```bash
+$ caddy validate --config config.json
+Error: validation: field 'upstreams' is required
+```
+
+## Validation Stages
+
+The command validates through these stages:
+
+1. **Load config file** from disk
+2. **Adapt to JSON** if an adapter is specified
+3. **Unmarshal JSON** into Go structures
+4. **Provision all modules** (calls `Provision()` on each)
+5. **Validate all modules** (calls `Validate()` on each)
+
+<Note>
+This catches most errors, but some issues (like port conflicts) only appear when the server actually starts.
+</Note>
+
+## What Gets Validated
+
+### Syntax errors
+
+```caddyfile
+example.com {
+    reverse_proxy   # Missing upstream
+}
+```
+
+```
+Error: Caddyfile:2: reverse_proxy requires at least one upstream address
+```
+
+### Unknown directives
+
+```caddyfile
+example.com {
+    invalid_directive value
+}
+```
+
+```
+Error: Caddyfile:2: unknown directive: invalid_directive
+```
+
+### Invalid values
+
+```caddyfile
+example.com {
+    tls {
+        protocols tls1.0  # Deprecated protocol
+    }
+}
+```
+
+### Missing required fields
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "routes": []  // Missing 'listen'
+        }
+      }
+    }
+  }
+}
+```
+
+### Module dependencies
+
+If a module requires another module to be configured:
+
+```
+Error: validation: module X requires module Y to be configured
+```
+
+## What Doesn't Get Validated
+
+Some things only fail at runtime:
+
+- **Port binding** - Can't check if port is available until binding
+- **File permissions** - Can't check file access until opening
+- **Network connectivity** - Can't check DNS/network until connecting
+- **TLS certificate** acquisition - Can't validate ACME until runtime
+
+## Use Cases
+
+### 1. Pre-deployment validation
+
+```bash
+# Before deploying
+caddy validate --config Caddyfile
+if [ $? -eq 0 ]; then
+    scp Caddyfile server:/etc/caddy/
+    ssh server 'caddy reload --config /etc/caddy/Caddyfile'
+fi
+```
+
+### 2. GitHub Actions CI
+
+```yaml
+name: Validate Caddy Config
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: caddyserver/xcaddy-action@v1
+      - name: Validate Caddyfile
+        run: caddy validate --config Caddyfile
+```
+
+### 3. Pre-commit hook
+
+`.git/hooks/pre-commit`:
+
+```bash
+#!/bin/bash
+if [ -f Caddyfile ]; then
+    caddy validate --config Caddyfile
+    if [ $? -ne 0 ]; then
+        echo "Caddyfile validation failed!"
+        exit 1
+    fi
+fi
+```
+
+### 4. Development workflow
+
+```bash
+# Edit config
+vim Caddyfile
+
+# Validate
+caddy validate --config Caddyfile
+
+# If valid, reload
+&& caddy reload --config Caddyfile
+```
+
+## Combining with adapt
+
+For Caddyfiles, you might want to see the adapted JSON too:
+
+```bash
+# Validate and show adapted JSON
+caddy adapt --config Caddyfile --validate --pretty
+```
+
+This does both: adapts to JSON and validates it.
+
+## Related Commands
+
+- [`caddy adapt`](/cli/adapt) - Adapt and optionally validate
+- [`caddy reload`](/cli/reload) - Reload config in running instance
+- [`caddy run`](/cli/run) - Start Caddy with config

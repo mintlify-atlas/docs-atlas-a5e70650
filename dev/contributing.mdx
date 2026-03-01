@@ -1,0 +1,406 @@
+---
+title: Contributing Guide
+description: How to contribute to Caddy - code, modules, documentation, and community support
+---
+
+Caddy welcomes contributions from everyone! From `CONTRIBUTING.md:3`, **Caddy wouldn't be nearly as excellent without your involvement!**
+
+## Getting Started
+
+### Join the Community
+
+From `CONTRIBUTING.md:6`:
+
+- **[Caddy Community Forum](https://caddy.community)** - Discussion, questions, and support
+- **[GitHub Issues](https://github.com/caddyserver/caddy/issues)** - Bug reports and feature requests only
+- **Twitter/X**: [@caddyserver](https://x.com/caddyserver)
+
+<Note>
+Use the forum for questions and discussions. Issues are for actionable development items.
+</Note>
+
+## Ways to Contribute
+
+### Contributing Code
+
+From `CONTRIBUTING.md:24`, to contribute code:
+
+<Steps>
+
+<Step title="Propose your change first">
+From `CONTRIBUTING.md:32`:
+
+**Open an issue to propose your change first.** This helps:
+- Avoid confusion and wasted effort
+- Coordinate what everyone is working on  
+- Ensure changes align with project goals
+- Discuss the best implementation approach
+
+<Warning>
+A lot of valuable time can be saved by discussing a proposal first!
+</Warning>
+</Step>
+
+<Step title="Fork and clone">
+From `CONTRIBUTING.md:67`:
+
+```bash
+# Fork the repo on GitHub first, then:
+git clone https://github.com/caddyserver/caddy.git
+cd caddy
+git remote add myfork https://github.com/<your-username>/caddy.git
+```
+</Step>
+
+<Step title="Make your changes">
+Make changes in the `caddyserver/caddy` directory on your computer.
+</Step>
+
+<Step title="Push to your fork">
+```bash
+git push myfork
+```
+</Step>
+
+<Step title="Create pull request">
+[Create a pull request](https://github.com/caddyserver/caddy/pull/new/master) to merge your changes into `caddyserver/caddy @ master`.
+</Step>
+
+</Steps>
+
+### Writing a Caddy Module
+
+From `CONTRIBUTING.md:84`:
+
+Caddy modules are Go libraries that extend Caddy's functionality. Anyone can write one!
+
+- **Learn**: [Module Development Guide](/dev/module-development)
+- **Tutorial**: [Plugin Tutorial](/dev/plugin-tutorial)
+- **Discuss**: Share your module on [the forums](https://caddy.community)
+
+<Note>
+Third-party modules are not tracked in the Caddy issue tracker.
+</Note>
+
+### Getting Help Using Caddy
+
+From `CONTRIBUTING.md:90`:
+
+**Ask on [the forum](https://caddy.community)!** More people can help you there than just the Caddy developers.
+
+<Tip>
+Once you've been helped, consider giving back by answering other people's questions!
+</Tip>
+
+### Reporting Bugs
+
+From `CONTRIBUTING.md:97`:
+
+<Steps>
+
+<Step title="Search existing issues">
+[Search the issues](https://github.com/caddyserver/caddy/issues) to see if it's already reported.
+</Step>
+
+<Step title="Open a new issue">
+If not found, [open a new issue](https://github.com/caddyserver/caddy/issues/new).
+</Step>
+
+<Step title="Follow the template">
+Provide:
+- Actual values (unredacted)
+- Steps to reproduce
+- Expected vs actual behavior
+- Your environment (OS, Caddy version, config)
+</Step>
+
+</Steps>
+
+From `CONTRIBUTING.md:102`:
+
+**Please simplify the issue as much as possible.** The burden is on you to make it easily reproducible.
+
+Recommended reading: [How to Report Bugs Effectively](http://www.chiark.greenend.org.uk/~sgtatham/bugs.html)
+
+### Bug Reporting Expectations
+
+From `CONTRIBUTING.md:110`, maintainers need:
+
+1. **Agreement that it's a bug** (reporter's responsibility)
+   - Must be unintentional, undesired, or surprising behavior
+   - Must violate documentation or specs
+
+2. **Ability to understand what's happening** (mostly reporter's responsibility)
+   - Provide reproducible steps, OR
+   - Be prepared to test possible solutions
+
+3. **A solution** (mostly maintainer's responsibility)
+   - May be a documentation change
+   - Security and correctness take priority
+
+From `CONTRIBUTING.md:126`:
+
+**At minimum, the reporter must:**
+1. Convince the reader it's a bug in Caddy (if not obvious)
+2. Reduce to minimum steps required to reproduce
+
+### Suggesting Features
+
+From `CONTRIBUTING.md:136`:
+
+1. **[Search existing requests](https://github.com/caddyserver/caddy/issues)** first
+2. If new, open an issue requesting the feature
+3. **Describe thoroughly** so we know how to implement it
+
+<Note>
+Not all features are a good fit for Caddy core. Many make excellent [modules](#writing-a-caddy-module)!
+</Note>
+
+### Improving Documentation
+
+From `CONTRIBUTING.md:143`:
+
+Documentation lives at [caddyserver.com/docs](https://caddyserver.com/docs).
+
+Source: [github.com/caddyserver/website](https://github.com/caddyserver/website)
+
+Submit issues there describing changes to make.
+
+## Code Contribution Standards
+
+From `CONTRIBUTING.md:30`, we hold contributions to a **high standard for quality** :bowtie:
+
+### Expected Practices
+
+<Steps>
+
+<Step title="Keep pull requests small">
+From `CONTRIBUTING.md:34`:
+
+**Smaller PRs are more likely to be merged** because they're easier to review!
+
+We might ask you to break up large PRs.
+</Step>
+
+<Step title="Keep related commits together">
+From `CONTRIBUTING.md:36`:
+
+Keep multiple related commits in the same PR if they rely on each other.
+</Step>
+
+<Step title="Write tests">
+From `CONTRIBUTING.md:38`:
+
+**Good, automated tests are very valuable!** They:
+- Ensure your change works
+- Prevent future changes from breaking yours
+- Must pass CI checks
+</Step>
+
+<Step title="Include benchmarks for optimizations">
+From `CONTRIBUTING.md:40`:
+
+Optimizations should be proven with benchmarks and profiling.
+</Step>
+
+<Step title="Squash insignificant commits">
+From `CONTRIBUTING.md:42`:
+
+Every commit should be significant. Use:
+- Interactive rebase, OR
+- `git reset --soft <diverging-commit>` then `git commit -s`
+</Step>
+
+<Step title="Maintain your contributions">
+From `CONTRIBUTING.md:44`:
+
+Help maintain your change after it's merged.
+</Step>
+
+<Step title="Use comments properly">
+From `CONTRIBUTING.md:46`:
+
+- Good godoc comments for package-level functions, types, values
+- Comments when code purpose is not obvious
+</Step>
+
+</Steps>
+
+### Code Certification
+
+From `CONTRIBUTING.md:50`, you certify that you:
+
+- **Wrote and comprehend the code** you submit
+- Comply with [the CLA](https://cla-assistant.io/caddyserver/caddy)
+- Have rights to contribute the code
+
+<Warning>
+**AI-Generated Code**: If using AI tools (ChatGPT, Copilot, etc.), the code MUST be:
+- Licensed for you to freely share
+- Fully comprehended by you (explain every line)
+- Verified by automated tests or thorough manual testing
+
+Disclose AI assistance in your PR.
+</Warning>
+
+From `CONTRIBUTING.md:56`:
+
+Current language models may produce code that looks correct but fails in subtle ways. You are responsible for the code you submit.
+
+### Pull Request Lifecycle
+
+From `CONTRIBUTING.md:48`:
+
+**Pull requests may still get closed.** Reasons:
+- Not a priority
+- Only useful to you, not generally helpful
+- Wrong thing or wrong time
+- Doesn't align with project goals
+
+You can always build your own modified Caddy or create a plugin!
+
+## Code Review Process
+
+From `CONTRIBUTING.md:28`:
+
+**Don't be surprised if we ask for revisions.** Please don't take it personally. :blue_heart:
+
+If your change is on the right track, we can guide you to make it mergeable.
+
+### For Collaborators
+
+From `CONTRIBUTING.md:152`, collaborators should:
+
+- **Review thoroughly** but kindly
+- Ask:
+  - Can it be more elegant?
+  - Is it a maintenance burden?
+  - What assumptions does it make?
+  - Is it well-tested?
+  - Is it a good fit?
+  - Does it fix the root problem?
+  - Any new dependencies? (Avoid!)
+
+- **Answer issues** and help debug
+- **Wait for approvals** before merging (1-2 other collaborators)
+- **Prefer squashed commits** over messy merges
+- **Don't accept dependencies lightly**
+- **Be extra careful** in `caddyhttp` and `caddytls` packages
+- **Verify tests** actually test what they claim
+
+## Making a Pull Request
+
+From `CONTRIBUTING.md:63`:
+
+<Steps>
+
+<Step title="Fork the repo">
+[Fork caddyserver/caddy](https://github.com/caddyserver/caddy) on GitHub.
+</Step>
+
+<Step title="Clone locally">
+```bash
+git clone https://github.com/caddyserver/caddy.git
+cd caddy
+```
+</Step>
+
+<Step title="Add your fork as remote">
+```bash
+git remote add myfork https://github.com/<your-username>/caddy.git
+```
+</Step>
+
+<Step title="Make changes">
+Edit code in the `caddyserver/caddy` directory.
+</Step>
+
+<Step title="Test your changes">
+From `README.md:136`:
+
+```bash
+# Run all tests
+go test ./...
+
+# Run specific module tests
+go test ./modules/caddyhttp/
+```
+</Step>
+
+<Step title="Commit changes">
+```bash
+git add .
+git commit -s -m "Brief description of change"
+```
+
+See [good commit messages](https://gist.github.com/matthewhudson/1475276).
+</Step>
+
+<Step title="Push to your fork">
+```bash
+git push myfork
+```
+</Step>
+
+<Step title="Create PR">
+[Create a pull request](https://github.com/caddyserver/caddy/pull/new/master) from your fork to `caddyserver/caddy @ master`.
+</Step>
+
+</Steps>
+
+## Becoming a Collaborator
+
+From `CONTRIBUTING.md:60`:
+
+We often grant **collaborator status** to contributors who author one or more significant, high-quality PRs that are merged.
+
+## Project Values
+
+From `CONTRIBUTING.md:184`:
+
+- **A person is always more important than code.** Be kind, patient, and considerate.
+- **The ends justify the means, if the means are good.** Don't cut corners.
+
+## Security Policy
+
+From `CONTRIBUTING.md:191`:
+
+If you think you've found a security vulnerability, see our [Security Policy](https://github.com/caddyserver/caddy/security/policy).
+
+## Support and Sponsorship
+
+From `README.md:203`:
+
+- **Companies**: Secure a support contract through [Ardan Labs](https://www.ardanlabs.com)
+- **Sponsorship**: Consider [sponsoring the project](https://github.com/sponsors/mholt)
+- **Individuals**: Exchange help for free on [the forum](https://caddy.community)
+
+<Tip>
+The best way to get help is to give it first!
+</Tip>
+
+## Recommended Reading
+
+From `CONTRIBUTING.md:175`:
+
+- [CodeReviewComments](https://github.com/golang/go/wiki/CodeReviewComments) - Go code review guidelines
+- [Good commit messages](https://gist.github.com/matthewhudson/1475276) - By Linus Torvalds
+- [Best Practices for Maintainers](https://opensource.guide/best-practices/)
+- [Shrinking Code Review](https://alexgaynor.net/2015/dec/29/shrinking-code-review/)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Create your own Caddy module
+  </Card>
+  <Card title="Testing Guide" icon="vial" href="/dev/testing">
+    Learn how to test your contributions
+  </Card>
+  <Card title="Building from Source" icon="code" href="/dev/building">
+    Set up your development environment
+  </Card>
+  <Card title="Caddy Community" icon="users" href="https://caddy.community">
+    Join the discussion forum
+  </Card>
+</CardGroup>

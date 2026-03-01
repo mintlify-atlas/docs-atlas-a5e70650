@@ -1,0 +1,418 @@
+---
+title: Rewrite
+description: Rewrite HTTP request URIs, methods, and query strings
+---
+
+The rewrite module is a middleware which can mutate HTTP requests. It can change the request method, URI (path and query), and perform various transformations on the request before it continues down the handler chain.
+
+**Module ID:** `http.handlers.rewrite`
+
+## Overview
+
+The rewrite handler provides two types of operations:
+
+- **Setters** - Completely overwrite values (method, URI)
+- **Modifiers** - Modify existing values in a differentiable way (strip prefix/suffix, substring replacement, etc.)
+
+It is atypical to combine setters and modifiers in a single rewrite.
+
+<Note>
+To ensure consistent behavior, prefix and suffix stripping is performed in URL-decoded (unescaped, normalized) space by default, except for specific bytes where an escape sequence is used in the pattern.
+</Note>
+
+## Configuration
+
+### Method
+
+<ParamField path="method" type="string">
+  Changes the request's HTTP verb.
+  
+  ```json
+  "method": "POST"
+  ```
+</ParamField>
+
+### URI
+
+<ParamField path="uri" type="string">
+  Changes the request's URI, which consists of path and query string. Only components specified will be changed.
+  
+  - `/foo.html` or `foo.html` - Only changes path, preserves query
+  - `?a=b` - Only changes query, preserves path
+  - `/foo?a=b` - Changes both path and query
+  - `?` - Clears the query string
+  
+  Supports placeholders. To preserve existing query string:
+  
+  ```json
+  "uri": "?{http.request.uri.query}&a=b"
+  ```
+  
+  Key-value pairs added to query string will not overwrite existing values (append-only).
+</ParamField>
+
+### Path Modifications
+
+<ParamField path="strip_path_prefix" type="string">
+  Strips the given prefix from the beginning of the URI path.
+  
+  The prefix should be written in normalized (unescaped) form, but if an escaping (`%xx`) is used, the path will be required to have that same escape at that position.
+  
+  ```json
+  "strip_path_prefix": "/api/v1"
+  ```
+</ParamField>
+
+<ParamField path="strip_path_suffix" type="string">
+  Strips the given suffix from the end of the URI path.
+  
+  Like `strip_path_prefix`, should be written in normalized form.
+  
+  ```json
+  "strip_path_suffix": ".php"
+  ```
+</ParamField>
+
+### Substring Replacement
+
+<ParamField path="uri_substring" type="array">
+  Performs substring replacements on the URI.
+  
+  <ResponseField name="find" type="string">
+    The substring to find. Supports placeholders.
+  </ResponseField>
+  
+  <ResponseField name="replace" type="string">
+    The substring to replace with. Supports placeholders.
+  </ResponseField>
+  
+  <ResponseField name="limit" type="integer">
+    Maximum number of replacements per string. Set to ≤ 0 for no limit (default).
+  </ResponseField>
+  
+  ```json
+  "uri_substring": [
+    {
+      "find": "_",
+      "replace": "-",
+      "limit": 0
+    }
+  ]
+  ```
+</ParamField>
+
+### Regular Expression Replacement
+
+<ParamField path="path_regexp" type="array">
+  Performs regular expression replacements on the URI path.
+  
+  <ResponseField name="find" type="string" required>
+    The regular expression to find (RE2 syntax).
+  </ResponseField>
+  
+  <ResponseField name="replace" type="string">
+    The substring to replace with. Supports placeholders and regex capture groups.
+  </ResponseField>
+  
+  ```json
+  "path_regexp": [
+    {
+      "find": "^/old/(.*)",
+      "replace": "/new/$1"
+    }
+  ]
+  ```
+</ParamField>
+
+### Query Operations
+
+<ParamField path="query" type="object">
+  Mutates the query string of the URI.
+  
+  <ResponseField name="rename" type="array">
+    Renames a query key from `key` to `val`, without affecting the value.
+    
+    ```json
+    "rename": [
+      {"key": "old_param", "val": "new_param"}
+    ]
+    ```
+  </ResponseField>
+  
+  <ResponseField name="set" type="array">
+    Sets query parameters, overwriting existing values.
+    
+    ```json
+    "set": [
+      {"key": "foo", "val": "bar"}
+    ]
+    ```
+  </ResponseField>
+  
+  <ResponseField name="add" type="array">
+    Adds query parameters. Does not overwrite existing fields, only appends additional values.
+    
+    ```json
+    "add": [
+      {"key": "utm_source", "val": "caddy"}
+    ]
+    ```
+  </ResponseField>
+  
+  <ResponseField name="replace" type="array">
+    Replaces query parameter values using substring or regex matching.
+    
+    <ParamField path="key" type="string">
+      The key to replace. Use `*` to replace in all keys.
+    </ParamField>
+    
+    <ParamField path="search" type="string">
+      The substring to search for.
+    </ParamField>
+    
+    <ParamField path="search_regexp" type="string">
+      The regular expression to search with.
+    </ParamField>
+    
+    <ParamField path="replace" type="string">
+      The string with which to replace matches.
+    </ParamField>
+    
+    ```json
+    "replace": [
+      {
+        "key": "*",
+        "search": "old",
+        "replace": "new"
+      }
+    ]
+    ```
+  </ResponseField>
+  
+  <ResponseField name="delete" type="array of strings">
+    Deletes query parameters by name.
+    
+    ```json
+    "delete": ["debug", "test"]
+    ```
+  </ResponseField>
+</ParamField>
+
+## Path Cleaning
+
+For all modifiers, paths are cleaned before being modified:
+
+- Multiple consecutive slashes are collapsed into a single slash
+- Dot elements (`.` and `..`) are resolved and removed
+
+Exception: If the pattern contains `//` (repeated slashes), slashes will not be merged while cleaning so that the rewrite can be interpreted literally.
+
+## Configuration Examples
+
+### Simple URI Rewrite
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "rewrite",
+  "uri": "/new/path"
+}
+```
+
+```caddyfile Caddyfile
+rewrite /new/path
+```
+</CodeGroup>
+
+### Strip Path Prefix
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "rewrite",
+  "strip_path_prefix": "/api/v1"
+}
+```
+
+```caddyfile Caddyfile
+uri strip_prefix /api/v1
+```
+</CodeGroup>
+
+### Strip Path Suffix
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "rewrite",
+  "strip_path_suffix": ".php"
+}
+```
+
+```caddyfile Caddyfile
+uri strip_suffix .php
+```
+</CodeGroup>
+
+### Path Regexp Replacement
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "rewrite",
+  "path_regexp": [
+    {
+      "find": "^/old/(.*)",
+      "replace": "/new/$1"
+    }
+  ]
+}
+```
+
+```caddyfile Caddyfile
+uri path_regexp ^/old/(.*) /new/$1
+```
+</CodeGroup>
+
+### Query String Manipulation
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "rewrite",
+  "query": {
+    "set": [
+      {"key": "foo", "val": "bar"}
+    ],
+    "add": [
+      {"key": "utm_source", "val": "caddy"}
+    ],
+    "delete": ["debug"]
+  }
+}
+```
+
+```caddyfile Caddyfile
+uri query +utm_source=caddy
+uri query -debug
+uri query foo=bar
+```
+</CodeGroup>
+
+### Change Method
+
+```json
+{
+  "handler": "rewrite",
+  "method": "POST"
+}
+```
+
+### Complex Example: API Versioning
+
+```json
+{
+  "handler": "rewrite",
+  "path_regexp": [
+    {
+      "find": "^/api/v1/(.*)",
+      "replace": "/v1/$1"
+    }
+  ],
+  "query": {
+    "set": [
+      {"key": "version", "val": "1"}
+    ]
+  }
+}
+```
+
+### Substring Replacement
+
+```json
+{
+  "handler": "rewrite",
+  "uri_substring": [
+    {
+      "find": "_",
+      "replace": "-"
+    }
+  ]
+}
+```
+
+This replaces all underscores with hyphens in both path and query.
+
+## Use Cases
+
+### SPA Fallback
+
+```caddyfile
+@notFile {
+    not file
+}
+rewrite @notFile /index.html
+```
+
+### Clean URLs (Remove .html)
+
+```json
+{
+  "handler": "rewrite",
+  "strip_path_suffix": ".html"
+}
+```
+
+### API Gateway Path Routing
+
+```json
+{
+  "match": [{"path": ["/users/*"]}],
+  "handle": [
+    {
+      "handler": "rewrite",
+      "strip_path_prefix": "/users"
+    },
+    {
+      "handler": "reverse_proxy",
+      "upstreams": [{"dial": "user-service:8080"}]
+    }
+  ]
+}
+```
+
+### Normalize Query Parameters
+
+```json
+{
+  "handler": "rewrite",
+  "query": {
+    "rename": [
+      {"key": "userid", "val": "user_id"},
+      {"key": "sessionid", "val": "session_id"}
+    ]
+  }
+}
+```
+
+## Important Notes
+
+<Note type="warning">
+**Path vs Query Matching:**
+- Escape sequences in patterns are compared with the request's raw/escaped path for those bytes only
+- The special escaped wildcard `%*` can be used for spans that should NOT be decoded
+- `/bands/%*` matches `/bands/AC%2fDC` whereas `/bands/*` does not
+</Note>
+
+<Note>
+**Query String Handling:**
+- Query keys can appear multiple times
+- Operations respect the multi-value nature of query strings
+- Set operations replace all values for a key
+- Add operations append to existing values
+</Note>
+
+<Note>
+**Rewrite Execution:**
+Rewrites are applied immediately when the handler executes. The changes affect subsequent handlers in the chain but do not affect matchers that have already been evaluated.
+</Note>

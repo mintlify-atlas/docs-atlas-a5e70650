@@ -1,0 +1,441 @@
+---
+title: HTTPS Configuration
+description: Configure automatic HTTPS with Let's Encrypt, custom certificates, and advanced TLS settings in Caddy
+---
+
+# HTTPS Configuration
+
+Caddy is the first web server to enable HTTPS by default. It automatically obtains and renews certificates from Let's Encrypt and other ACME CAs.
+
+## Automatic HTTPS
+
+HTTPS is enabled automatically for all sites with hostnames:
+
+```caddyfile
+example.com {
+    respond "Hello, HTTPS!"
+}
+```
+
+<Note>
+  Caddy automatically:
+  - Obtains certificates from Let's Encrypt
+  - Renews certificates before expiration
+  - Staples OCSP responses
+  - Redirects HTTP to HTTPS
+</Note>
+
+## Certificate Automation
+
+### Automation Policies
+
+Configure how certificates are obtained and managed:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "subjects": ["example.com", "*.example.com"],
+            "issuers": [
+              {
+                "module": "acme",
+                "email": "admin@example.com",
+                "ca": "https://acme-v02.api.letsencrypt.org/directory"
+              }
+            ],
+            "renewal_window_ratio": 0.33,
+            "key_type": "ec256",
+            "must_staple": false
+          }
+        ],
+        "ocsp_interval": "1h",
+        "renew_interval": "10m"
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile  
+example.com {
+    tls admin@example.com {
+        issuer acme {
+            ca https://acme-v02.api.letsencrypt.org/directory
+        }
+        key_type ec256
+    }
+}
+```
+</CodeGroup>
+
+### Key Types
+
+Supported key types:
+- `ec256` - ECDSA P-256 (default, recommended)
+- `ec384` - ECDSA P-384
+- `rsa2048` - RSA 2048-bit
+- `rsa4096` - RSA 4096-bit
+- `ed25519` - Ed25519
+
+<Tip>
+  ECDSA keys (ec256) provide better performance and smaller certificate sizes compared to RSA.
+</Tip>
+
+## Certificate Issuers
+
+### Let's Encrypt
+
+Default production CA:
+
+```caddyfile
+tls {
+    issuer acme {
+        ca https://acme-v02.api.letsencrypt.org/directory
+        email admin@example.com
+    }
+}
+```
+
+### ZeroSSL
+
+Alternative CA with longer validity:
+
+```caddyfile
+tls {
+    issuer zerossl {
+        email admin@example.com
+    }
+}
+```
+
+### Internal Certificates
+
+For development or internal services:
+
+```caddyfile
+localhost {
+    tls internal
+}
+
+# Or for specific domains
+intranet.local {
+    tls internal {
+        ca internal_ca
+    }
+}
+```
+
+## On-Demand TLS
+
+Obtain certificates during TLS handshakes:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "tls": {
+      "automation": {
+        "on_demand": {
+          "ask": "https://api.example.com/check-domain",
+          "rate_limit": {
+            "interval": "1m",
+            "burst": 5
+          }
+        },
+        "policies": [
+          {
+            "on_demand": true
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+*.example.com {
+    tls {
+        on_demand
+    }
+}
+```
+</CodeGroup>
+
+<Warning>
+  On-Demand TLS is powerful but must be protected with rate limits or an `ask` endpoint to prevent abuse. Without protections, attackers could trigger unlimited certificate requests.
+</Warning>
+
+### Permission Module
+
+Validate domains before issuing certificates:
+
+```json
+{
+  "on_demand": {
+    "permission": {
+      "module": "http",
+      "endpoint": "https://api.example.com/check-domain?domain={domain}"
+    }
+  }
+}
+```
+
+## Manual Certificates
+
+### Load from Files
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "tls": {
+      "certificates": {
+        "load_files": [
+          {
+            "certificate": "/path/to/cert.pem",
+            "key": "/path/to/key.pem"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    tls /path/to/cert.pem /path/to/key.pem
+}
+```
+</CodeGroup>
+
+### Load from Folder
+
+Automatically load all certificates from a directory:
+
+```json
+{
+  "apps": {
+    "tls": {
+      "certificates": {
+        "load_folders": ["/path/to/certs"]
+      }
+    }
+  }
+}
+```
+
+## DNS Challenge
+
+Use DNS-01 challenge for wildcard certificates or when HTTP-01 is unavailable:
+
+<CodeGroup>
+```json JSON
+{
+  "issuer": {
+    "module": "acme",
+    "challenges": {
+      "dns": {
+        "provider": {
+          "name": "cloudflare",
+          "api_token": "{env.CLOUDFLARE_API_TOKEN}"
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+*.example.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+}
+```
+</CodeGroup>
+
+## TLS Settings
+
+### Connection Policy
+
+Configure TLS settings per hostname:
+
+<CodeGroup>
+```json JSON
+{
+  "apps": {
+    "tls": {
+      "connection_policies": [
+        {
+          "match": {
+            "sni": ["example.com"]
+          },
+          "protocol_min": "tls1.2",
+          "protocol_max": "tls1.3",
+          "cipher_suites": [
+            "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+            "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+          ],
+          "curves": ["x25519", "secp256r1"],
+          "alpn": ["h2", "http/1.1"]
+        }
+      ]
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    tls {
+        protocols tls1.2 tls1.3
+        ciphers TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        curves x25519 secp256r1
+        alpn h2 http/1.1
+    }
+}
+```
+</CodeGroup>
+
+### Client Authentication
+
+Require client certificates (mutual TLS):
+
+```caddyfile
+example.com {
+    tls {
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /path/to/ca.pem
+        }
+    }
+}
+```
+
+## Certificate Storage
+
+### File System (Default)
+
+Certificates are stored in:
+- Linux: `$XDG_DATA_HOME/caddy` or `$HOME/.local/share/caddy`
+- macOS: `$HOME/Library/Application Support/Caddy`
+- Windows: `%APPDATA%\Caddy`
+
+### Custom Storage
+
+Use different storage backends:
+
+```json
+{
+  "storage": {
+    "module": "file_system",
+    "root": "/custom/path/to/storage"
+  }
+}
+```
+
+## Session Tickets
+
+Configure session ticket rotation:
+
+```json
+{
+  "apps": {
+    "tls": {
+      "session_tickets": {
+        "key_source": {
+          "module": "standard"
+        },
+        "rotation_interval": "24h",
+        "max_keys": 4,
+        "disabled": false
+      }
+    }
+  }
+}
+```
+
+## OCSP Stapling
+
+Caddy automatically staples OCSP responses. Configure check intervals:
+
+```json
+{
+  "automation": {
+    "ocsp_interval": "1h",
+    "policies": [
+      {
+        "disable_ocsp_stapling": false
+      }
+    ]
+  }
+}
+```
+
+## Complete Example
+
+```caddyfile
+# Main site with automatic HTTPS
+example.com {
+    tls admin@example.com {
+        # Use Let's Encrypt
+        issuer acme {
+            ca https://acme-v02.api.letsencrypt.org/directory
+        }
+        
+        # Use ECDSA key
+        key_type ec256
+        
+        # TLS settings
+        protocols tls1.2 tls1.3
+        
+        # Require client certificates
+        client_auth {
+            mode request
+            trusted_ca_cert_file /path/to/client-ca.pem
+        }
+    }
+    
+    respond "Secure site"
+}
+
+# Wildcard with DNS challenge
+*.api.example.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    
+    reverse_proxy backend:8080
+}
+
+# Internal development site
+localhost {
+    tls internal
+    
+    file_server
+}
+```
+
+## Best Practices
+
+<Steps>
+
+### Security Recommendations
+
+1. **Use ECDSA keys** - Better performance than RSA
+2. **Enable OCSP stapling** - Enabled by default
+3. **Keep TLS 1.2+ only** - Disable older protocols
+4. **Monitor certificate expiration** - Caddy renews automatically at 1/3 lifetime remaining
+5. **Protect on-demand TLS** - Always use rate limits or validation
+
+</Steps>
+
+<Tip>
+  Caddy checks certificates for renewal every 10 minutes by default. Certificates are renewed when they have about 1/3 of their lifetime remaining.
+</Tip>

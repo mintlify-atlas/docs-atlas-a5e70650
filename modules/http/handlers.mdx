@@ -1,0 +1,271 @@
+---
+title: HTTP Handlers
+description: Overview of HTTP request handlers in Caddy
+---
+
+HTTP handlers are the core components that process requests in Caddy. They form middleware chains that can modify requests, generate responses, or perform side effects.
+
+## Handler Interface
+
+All HTTP handlers in Caddy implement the `Handler` interface:
+
+```go
+type Handler interface {
+    ServeHTTP(http.ResponseWriter, *http.Request) error
+}
+```
+
+Unlike the standard library's `http.Handler`, Caddy's handler can return an error. This allows proper error propagation through the middleware chain.
+
+## Middleware Handler
+
+Most handlers are middleware, implementing the `MiddlewareHandler` interface:
+
+```go
+type MiddlewareHandler interface {
+    ServeHTTP(http.ResponseWriter, *http.Request, Handler) error
+}
+```
+
+The third parameter is the next handler in the chain. Middleware should call `next.ServeHTTP(w, r)` to propagate the request.
+
+## Handler Types
+
+### Middleware Handlers
+
+These handlers modify the request/response but typically call the next handler:
+
+- **headers** - Manipulates HTTP headers
+- **rewrite** - Rewrites request URI and method  
+- **encode** - Compresses response bodies
+- **templates** - Executes response as Go template
+
+### Terminal Handlers
+
+These handlers generate responses and typically don't call the next handler:
+
+- **file_server** - Serves static files
+- **reverse_proxy** - Proxies requests to upstream servers
+- **respond** - Writes static responses
+
+## Handler Execution
+
+### Request Flow
+
+Requests flow **down** the handler list (top to bottom):
+
+```json
+[
+  {"handler": "encode"},      // 1. Wraps response
+  {"handler": "templates"},   // 2. Buffers response
+  {"handler": "file_server"}  // 3. Originates content
+]
+```
+
+### Response Flow
+
+Responses flow **up** the handler list (bottom to top):
+
+1. `file_server` writes the file
+2. `templates` executes the template
+3. `encode` compresses the output
+
+<Note type="warning">
+Handler order matters! Place response transformers (encode, templates) before content originators (file_server, reverse_proxy).
+</Note>
+
+## Common Handlers
+
+### authentication
+
+**Module ID:** `http.handlers.authentication`
+
+Provides HTTP authentication (Basic Auth, etc.)
+
+### encode
+
+**Module ID:** `http.handlers.encode`
+
+Compresses response bodies with gzip, zstd, or brotli.
+
+### error
+
+**Module ID:** `http.handlers.error`
+
+Triggers an error with a specified status code.
+
+### file_server
+
+**Module ID:** `http.handlers.file_server`
+
+Serves static files from the filesystem. See [File Server](/modules/http/file-server) for details.
+
+### headers
+
+**Module ID:** `http.handlers.headers`
+
+Manipulates request and response headers. See [Headers](/modules/http/headers) for details.
+
+### map
+
+**Module ID:** `http.handlers.map`
+
+Maps input values to output values, storing the result in a placeholder.
+
+### push
+
+**Module ID:** `http.handlers.push`
+
+Implements HTTP/2 server push.
+
+### request_body
+
+**Module ID:** `http.handlers.request_body`
+
+Manipulates the request body (size limits, etc.).
+
+### respond
+
+**Module ID:** `http.handlers.respond`
+
+Writes a hard-coded/static response.
+
+### reverse_proxy
+
+**Module ID:** `http.handlers.reverse_proxy`
+
+Proxies requests to upstream servers with load balancing and health checks. See [Reverse Proxy](/modules/http/reverse-proxy) for details.
+
+### rewrite
+
+**Module ID:** `http.handlers.rewrite`
+
+Rewrites the request URI, method, and query string. See [Rewrite](/modules/http/rewrite) for details.
+
+### subroute
+
+**Module ID:** `http.handlers.subroute`
+
+Groups routes together under common configuration.
+
+### templates
+
+**Module ID:** `http.handlers.templates`
+
+Executes response bodies as Go templates. See [Templates](/modules/http/templates) for details.
+
+### tracing
+
+**Module ID:** `http.handlers.tracing`
+
+Integrates with OpenTelemetry tracing.
+
+### vars
+
+**Module ID:** `http.handlers.vars`
+
+Sets arbitrary variables on the request.
+
+## Handler Configuration
+
+Handlers are configured in routes with the `handle` directive:
+
+<CodeGroup>
+```json JSON
+{
+  "routes": [
+    {
+      "handle": [
+        {
+          "handler": "encode",
+          "encodings": {
+            "gzip": {}
+          }
+        },
+        {
+          "handler": "file_server",
+          "root": "/var/www/html"
+        }
+      ]
+    }
+  ]
+}
+```
+
+```caddyfile Caddyfile
+example.com {
+    encode gzip
+    file_server
+}
+```
+</CodeGroup>
+
+## Error Handling
+
+Handlers can return errors to trigger the error handling chain:
+
+```go
+return caddyhttp.Error(http.StatusNotFound, nil)
+```
+
+Errors should be `HandlerError` values for proper status code handling:
+
+```go
+type HandlerError struct {
+    Err        error
+    StatusCode int
+    ID         string
+    Trace      string
+}
+```
+
+## Response Handlers
+
+The `reverse_proxy` and some other handlers support `handle_response` routes that execute based on upstream response properties:
+
+```json
+{
+  "handle_response": [
+    {
+      "match": {
+        "status_code": [404]
+      },
+      "routes": [
+        {
+          "handle": [
+            {"handler": "file_server"}
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Custom Handlers
+
+To create a custom handler, implement the interfaces and register the module:
+
+```go
+func init() {
+    caddy.RegisterModule(MyHandler{})
+}
+
+type MyHandler struct {}
+
+func (MyHandler) CaddyModule() caddy.ModuleInfo {
+    return caddy.ModuleInfo{
+        ID: "http.handlers.my_handler",
+        New: func() caddy.Module { return new(MyHandler) },
+    }
+}
+
+func (h MyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+    // Handler logic here
+    return next.ServeHTTP(w, r)
+}
+```
+
+<Note>
+Handlers which act as responders (content origins) need not invoke the next handler, since they write the final response.
+</Note>

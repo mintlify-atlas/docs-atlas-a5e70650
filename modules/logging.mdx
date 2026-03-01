@@ -1,0 +1,542 @@
+---
+title: Logging Module
+description: Configure logging in Caddy with encoders, writers, filters, and custom log outputs
+---
+
+The logging module provides comprehensive structured logging capabilities for Caddy. By default, all logs at INFO level and higher are written to standard error in a human-readable format.
+
+## Overview
+
+Caddy's logging system is:
+- **Zero-allocation** - High performance in terms of memory and CPU time
+- **Structured** - Built on top of Uber's Zap logging library
+- **Flexible** - Multiple logs with different outputs and filters
+- **Filterable** - Filter by level and module/logger names
+
+## Configuration
+
+### Basic Logging Structure
+
+<CodeGroup>
+```json JSON
+{
+  "logging": {
+    "sink": {
+      "writer": {
+        "output": "stderr"
+      }
+    },
+    "logs": {
+      "default": {
+        "level": "INFO",
+        "writer": {
+          "output": "file",
+          "filename": "/var/log/caddy/access.log"
+        },
+        "encoder": {
+          "format": "json"
+        }
+      }
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+log {
+  output file /var/log/caddy/access.log
+  format json
+  level INFO
+}
+```
+</CodeGroup>
+
+## Log Encoders
+
+Encoders determine how log entries are formatted.
+
+### Console Encoder
+
+Module ID: `caddy.logging.encoders.console`
+
+Encodes log entries in a human-readable format.
+
+<ParamField path="message_key" type="string">
+  The key name for the log message. Default: `msg`
+</ParamField>
+
+<ParamField path="level_key" type="string">
+  The key name for the log level. Default: `level`
+</ParamField>
+
+<ParamField path="time_key" type="string">
+  The key name for the timestamp. Default: `ts`
+</ParamField>
+
+<ParamField path="name_key" type="string">
+  The key name for the logger name. Default: `logger`
+</ParamField>
+
+<ParamField path="caller_key" type="string">
+  The key name for the caller information. Default: `caller`
+</ParamField>
+
+<ParamField path="stacktrace_key" type="string">
+  The key name for stack traces. Default: `stacktrace`
+</ParamField>
+
+<ParamField path="line_ending" type="string">
+  The character(s) to use for line endings. Default: `\n`
+</ParamField>
+
+<ParamField path="time_format" type="string">
+  Time format for timestamps. Options:
+  - `unix_seconds_float` - Unix timestamp as float (default)
+  - `unix_milli_float` - Unix timestamp in milliseconds as float
+  - `unix_nano` - Unix timestamp in nanoseconds
+  - `iso8601` - ISO8601 format
+  - `rfc3339` - RFC3339 format
+  - `rfc3339_nano` - RFC3339 with nanoseconds
+  - `wall` - Wall clock time (2006/01/02 15:04:05)
+  - `wall_milli` - Wall clock with milliseconds
+  - `wall_nano` - Wall clock with nanoseconds
+  - `common_log` - Common log format (02/Jan/2006:15:04:05 -0700)
+  - Custom Go time layout string
+</ParamField>
+
+<ParamField path="time_local" type="boolean">
+  Use local timezone instead of UTC. Default: `false`
+</ParamField>
+
+<ParamField path="duration_format" type="string">
+  Format for durations:
+  - `s`, `second`, `seconds` - Seconds (default)
+  - `ns`, `nano`, `nanos` - Nanoseconds
+  - `ms`, `milli`, `millis` - Milliseconds
+  - `string` - String representation
+</ParamField>
+
+<ParamField path="level_format" type="string">
+  Format for log levels:
+  - `lower` - lowercase (default)
+  - `upper` - UPPERCASE
+  - `color` - Color-coded (console only)
+</ParamField>
+
+### JSON Encoder
+
+Module ID: `caddy.logging.encoders.json`
+
+Encodes log entries as JSON. Accepts the same configuration parameters as the console encoder.
+
+<CodeGroup>
+```json JSON
+{
+  "encoder": {
+    "format": "json",
+    "time_format": "rfc3339",
+    "level_format": "lower"
+  }
+}
+```
+
+```caddyfile Caddyfile
+log {
+  format json {
+    time_format rfc3339
+    level_format lower
+  }
+}
+```
+</CodeGroup>
+
+## Log Writers
+
+Writers determine where log output is sent.
+
+### File Writer
+
+Module ID: `caddy.logging.writers.file`
+
+Writes logs to files with automatic rotation.
+
+<ParamField path="filename" type="string" required>
+  Path to the log file
+</ParamField>
+
+<ParamField path="mode" type="string">
+  File permissions mode (octal). Default: `0600`
+</ParamField>
+
+<ParamField path="dir_mode" type="string">
+  Directory permissions mode. Options:
+  - Octal string (e.g., `0755`)
+  - `inherit` - Copy nearest parent directory permissions
+  - `from_file` - Derive from file mode (e.g., 0644 → 0755)
+  
+  Default: `0700`
+</ParamField>
+
+<ParamField path="roll" type="boolean">
+  Enable log rotation. Default: `true`
+</ParamField>
+
+<ParamField path="roll_size_mb" type="integer">
+  Maximum log file size in megabytes before rotation. Default: `100`
+</ParamField>
+
+<ParamField path="roll_interval" type="duration">
+  Time interval for log rotation (e.g., `24h`, `1h30m`)
+</ParamField>
+
+<ParamField path="roll_minutes" type="array of integers">
+  Minutes of each hour to rotate logs. Example: `[0, 30]` rotates at xx:00 and xx:30
+</ParamField>
+
+<ParamField path="roll_at" type="array of strings">
+  Times of day to rotate logs. Example: `["00:00", "12:00"]` rotates at midnight and noon
+</ParamField>
+
+<ParamField path="roll_compression" type="string">
+  Compression algorithm for rotated files:
+  - `gzip` (default)
+  - `zstd`
+  - `none`
+</ParamField>
+
+<ParamField path="roll_local_time" type="boolean">
+  Use local time in rotated filenames. Default: `false`
+</ParamField>
+
+<ParamField path="roll_keep" type="integer">
+  Maximum number of rolled log files to keep. Default: `10`
+</ParamField>
+
+<ParamField path="roll_keep_days" type="integer">
+  Maximum number of days to keep rolled log files. Default: `90`
+</ParamField>
+
+<ParamField path="backup_time_format" type="string">
+  Go time format for rotated filenames. Default: `2006-01-02T15-04-05.000`
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "writer": {
+    "output": "file",
+    "filename": "/var/log/caddy/access.log",
+    "roll_size_mb": 100,
+    "roll_keep": 20,
+    "roll_keep_days": 90,
+    "roll_compression": "gzip"
+  }
+}
+```
+
+```caddyfile Caddyfile
+log {
+  output file /var/log/caddy/access.log {
+    roll_size 100mb
+    roll_keep 20
+    roll_keep_for 90d
+    roll_compression gzip
+  }
+}
+```
+</CodeGroup>
+
+### Network Writer
+
+Module ID: `caddy.logging.writers.net`
+
+Writes logs to a network socket. If the connection fails, logs are dumped to stderr.
+
+<ParamField path="address" type="string" required>
+  Network address to connect to (e.g., `localhost:514`, `syslog.example.com:514`)
+</ParamField>
+
+<ParamField path="dial_timeout" type="duration">
+  Timeout for connecting to the socket
+</ParamField>
+
+<ParamField path="soft_start" type="boolean">
+  Allow connection errors when first opening the writer. Logs will go to stderr until connection succeeds. Default: `false`
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "writer": {
+    "output": "net",
+    "address": "localhost:514",
+    "dial_timeout": "5s",
+    "soft_start": true
+  }
+}
+```
+
+```caddyfile Caddyfile
+log {
+  output net localhost:514 {
+    dial_timeout 5s
+    soft_start
+  }
+}
+```
+</CodeGroup>
+
+### Standard Writers
+
+<Note>
+Standard output writers are built-in and require no configuration.
+</Note>
+
+- **stdout** - `caddy.logging.writers.stdout` - Writes to standard output
+- **stderr** - `caddy.logging.writers.stderr` - Writes to standard error (default)
+- **discard** - `caddy.logging.writers.discard` - Discards all logs
+
+## Log Filters
+
+Filters manipulate or redact log fields.
+
+### Delete Filter
+
+Module ID: `caddy.logging.encoders.filter.delete`
+
+Deletes a log field entirely.
+
+### Hash Filter
+
+Module ID: `caddy.logging.encoders.filter.hash`
+
+Replaces field value with first 4 bytes of SHA-256 hash.
+
+### Replace Filter
+
+Module ID: `caddy.logging.encoders.filter.replace`
+
+<ParamField path="value" type="string" required>
+  Replacement value
+</ParamField>
+
+### IP Mask Filter
+
+Module ID: `caddy.logging.encoders.filter.ip_mask`
+
+Masks IP addresses to protect privacy.
+
+<ParamField path="ipv4_cidr" type="integer">
+  IPv4 CIDR subnet size for masking (e.g., `16` masks last two octets)
+</ParamField>
+
+<ParamField path="ipv6_cidr" type="integer">
+  IPv6 CIDR subnet size for masking
+</ParamField>
+
+### Query Filter
+
+Module ID: `caddy.logging.encoders.filter.query`
+
+Filters query parameters from URLs.
+
+<ParamField path="actions" type="array of objects">
+  List of actions to apply to query parameters:
+  - `type`: `replace`, `hash`, or `delete`
+  - `parameter`: Query parameter name
+  - `value`: Replacement value (for `replace` type)
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "filter": "query",
+  "actions": [
+    {
+      "type": "delete",
+      "parameter": "token"
+    },
+    {
+      "type": "replace",
+      "parameter": "api_key",
+      "value": "REDACTED"
+    }
+  ]
+}
+```
+
+```caddyfile Caddyfile
+filter query {
+  delete token
+  replace api_key REDACTED
+}
+```
+</CodeGroup>
+
+### Cookie Filter
+
+Module ID: `caddy.logging.encoders.filter.cookie`
+
+Filters cookies from HTTP headers.
+
+<ParamField path="actions" type="array of objects">
+  List of actions to apply to cookies:
+  - `type`: `replace`, `hash`, or `delete`
+  - `name`: Cookie name
+  - `value`: Replacement value (for `replace` type)
+</ParamField>
+
+### Regexp Filter
+
+Module ID: `caddy.logging.encoders.filter.regexp`
+
+Replaces content matching a regular expression.
+
+<ParamField path="regexp" type="string" required>
+  Regular expression pattern
+</ParamField>
+
+<ParamField path="value" type="string">
+  Replacement value
+</ParamField>
+
+### Rename Filter
+
+Module ID: `caddy.logging.encoders.filter.rename`
+
+<ParamField path="name" type="string" required>
+  New field name
+</ParamField>
+
+## Log Levels
+
+Available log levels (from lowest to highest priority):
+
+- `DEBUG` - Detailed debugging information
+- `INFO` - General informational messages (default)
+- `WARN` - Warning messages
+- `ERROR` - Error messages
+- `PANIC` - Panic-level messages
+- `FATAL` - Fatal messages (causes program termination)
+
+## Custom Logs
+
+Define multiple logs with different configurations:
+
+<ParamField path="include" type="array of strings">
+  Logger names to include (e.g., `["admin.api", "http.handlers"]`)
+</ParamField>
+
+<ParamField path="exclude" type="array of strings">
+  Logger names to exclude (e.g., `["http.log.access"]`)
+</ParamField>
+
+<CodeGroup>
+```json JSON
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "INFO",
+        "exclude": ["http.log.access"]
+      },
+      "access": {
+        "writer": {
+          "output": "file",
+          "filename": "/var/log/caddy/access.log"
+        },
+        "encoder": {
+          "format": "json"
+        },
+        "include": ["http.log.access"]
+      }
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Sampling
+
+Enable log sampling to improve performance on high-load servers:
+
+<ParamField path="interval" type="duration">
+  Sampling window duration. Default: `1s`
+</ParamField>
+
+<ParamField path="first" type="integer">
+  Number of entries to log within each interval. Default: `100`
+</ParamField>
+
+<ParamField path="thereafter" type="integer">
+  After `first` entries, keep 1 in this many entries. Default: `100`
+</ParamField>
+
+```json
+{
+  "sampling": {
+    "interval": "1s",
+    "first": 100,
+    "thereafter": 100
+  }
+}
+```
+
+## Examples
+
+### Production JSON Logging
+
+```json
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "INFO",
+        "writer": {
+          "output": "file",
+          "filename": "/var/log/caddy/caddy.log",
+          "roll_size_mb": 100,
+          "roll_keep": 10
+        },
+        "encoder": {
+          "format": "json",
+          "time_format": "rfc3339"
+        }
+      }
+    }
+  }
+}
+```
+
+### Redact Sensitive Data
+
+```json
+{
+  "logging": {
+    "logs": {
+      "default": {
+        "encoder": {
+          "format": "filter",
+          "wrap": {
+            "format": "json"
+          },
+          "fields": {
+            "request>headers>Authorization": {
+              "filter": "delete"
+            },
+            "request>headers>Cookie": {
+              "filter": "cookie",
+              "actions": [
+                {
+                  "type": "hash",
+                  "name": "session_id"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```

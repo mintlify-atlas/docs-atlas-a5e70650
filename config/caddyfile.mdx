@@ -1,0 +1,385 @@
+---
+title: Caddyfile Configuration
+description: Learn about Caddy's native Caddyfile format for human-friendly configuration
+---
+
+The Caddyfile is Caddy's native configuration format - a human-friendly alternative to JSON. It provides a simple, intuitive syntax for configuring your web server.
+
+## Overview
+
+The Caddyfile adapter converts Caddyfile syntax to Caddy's native JSON configuration format. This allows you to write configs in a more readable format while maintaining the full power of Caddy's JSON structure.
+
+<Note>
+The Caddyfile is parsed into tokens and then adapted to JSON. Environment variables in `{$ENVIRONMENT_VARIABLE}` notation are replaced before parsing begins.
+</Note>
+
+## Structure
+
+A Caddyfile consists of **server blocks**, which define how Caddy should handle requests for specific sites or addresses.
+
+### Server Blocks
+
+From `caddyconfig/caddyfile/parse.go:753-761`:
+
+```go
+type ServerBlock struct {
+    HasBraces    bool
+    Keys         []Token
+    Segments     []Segment
+    IsNamedRoute bool
+}
+```
+
+Each server block:
+- Starts with one or more **addresses** (site addresses or labels)
+- Contains **directives** that configure behavior
+- Can optionally use curly braces `{}` for multiple directives
+
+<CodeGroup>
+
+```caddyfile Single Site
+localhost {
+    respond "Hello World"
+}
+```
+
+```caddyfile Multiple Sites
+example.com, www.example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+```caddyfile Simple Format
+localhost
+respond "Hello!"
+```
+
+</CodeGroup>
+
+## Syntax Rules
+
+### Tokens and Whitespace
+
+From the lexer implementation (`caddyconfig/caddyfile/lexer.go:27-37`):
+
+- **Tokens** are separated by whitespace
+- **Quoted strings** can contain whitespace: `"hello world"`
+- **Backtick strings** preserve literal content: `` `raw text` ``
+- **Comments** start with `#` and continue to end of line
+
+### Quotes and Escaping
+
+<Tabs>
+  <Tab title="Double Quotes">
+    ```caddyfile
+    # Escape quotes inside quoted strings
+    respond "He said \"Hello\""
+    ```
+  </Tab>
+  
+  <Tab title="Backticks">
+    ```caddyfile
+    # Raw strings - no escaping needed
+    respond `{"json": "value"}`
+    ```
+  </Tab>
+  
+  <Tab title="Heredoc">
+    ```caddyfile
+    # Multi-line heredoc syntax
+    respond <<HTML
+    <html>
+        <body>Hello</body>
+    </html>
+    HTML
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Heredoc markers must contain only alphanumeric characters, dashes, and underscores. The closing marker must match the opening marker exactly.
+</Warning>
+
+### Environment Variables
+
+Environment variables are replaced during parsing (`caddyconfig/caddyfile/parse.go:67-111`):
+
+```caddyfile
+# Basic substitution
+{$API_KEY}
+
+# With default value
+{$PORT:8080}
+
+# In a full example
+localhost:{$PORT:2015} {
+    reverse_proxy {$BACKEND_HOST:localhost:8080}
+}
+```
+
+## Directives
+
+Directives are keywords that configure Caddy's behavior. From `caddyconfig/caddyfile/parse.go:783-795`:
+
+```go
+type Segment []Token
+
+// Directive returns the directive name for the segment.
+func (s Segment) Directive() string {
+    if len(s) > 0 {
+        return s[0].Text
+    }
+    return ""
+}
+```
+
+Directives can:
+- Appear on a single line: `respond "OK"`
+- Open a block with arguments: `reverse_proxy localhost:8080 { ... }`
+- Span multiple lines with line continuation `\`
+
+<CodeGroup>
+
+```caddyfile Logging
+localhost {
+    log {
+        output file ./caddy.log
+        level INFO
+    }
+}
+```
+
+```caddyfile Reverse Proxy
+example.com {
+    reverse_proxy localhost:8080 {
+        header_up Host {upstream_hostport}
+        health_check {
+            interval 30s
+            timeout 5s
+        }
+    }
+}
+```
+
+```caddyfile File Server
+fileserver.local {
+    root * /var/www/html
+    file_server browse
+}
+```
+
+</CodeGroup>
+
+## Advanced Features
+
+### Snippets
+
+Reusable configuration blocks defined with parentheses (`caddyconfig/caddyfile/parse.go:710-717`):
+
+```caddyfile
+# Define a snippet
+(common-config) {
+    encode gzip
+    log
+}
+
+# Use the snippet
+example.com {
+    import common-config
+    reverse_proxy localhost:8080
+}
+```
+
+### Named Routes
+
+Define reusable route handlers with `&(name)` syntax:
+
+```caddyfile
+&(api-handler) {
+    reverse_proxy localhost:3000
+}
+
+example.com {
+    handle /api/* {
+        invoke api-handler
+    }
+}
+```
+
+### Import Directive
+
+Import configurations from other files (`caddyconfig/caddyfile/parse.go:356-579`):
+
+<CodeGroup>
+
+```caddyfile Basic Import
+import sites/*.conf
+```
+
+```caddyfile With Arguments
+import snippets/ssl.conf example.com
+```
+
+```caddyfile sites/api.conf
+# Can use {args.0} for first argument
+{args.0} {
+    reverse_proxy localhost:3000
+}
+```
+
+</CodeGroup>
+
+<Warning>
+Glob patterns in imports may only contain one wildcard (`*`) to prevent performance issues. Imported files starting with `.` are automatically skipped.
+</Warning>
+
+### Matchers
+
+Request matchers filter which requests a directive applies to:
+
+```caddyfile
+localhost {
+    # Define a matcher
+    @api {
+        path /api/*
+        header Content-Type application/json
+    }
+    
+    # Use the matcher
+    reverse_proxy @api localhost:3000
+    
+    # Inline matcher
+    respond /health 200
+}
+```
+
+<Note>
+Matchers must be defined within a site block, not globally. Attempting to define matchers globally (e.g., `@matcher ...`) will result in an error.
+</Note>
+
+## Parsing Process
+
+The Caddyfile parsing follows these steps (`caddyconfig/caddyfile/parse.go:30-58`):
+
+1. **Tokenization** - Input is lexed into tokens
+2. **Environment Variable Expansion** - `{$VAR}` patterns are replaced
+3. **Token Grouping** - Tokens are grouped by server blocks
+4. **Directive Parsing** - Each directive is parsed into segments
+5. **Import Processing** - Import directives are resolved and inlined
+6. **Adaptation** - The structured data is converted to JSON
+
+```go
+func Parse(filename string, input []byte) ([]ServerBlock, error) {
+    tokens, err := allTokens(filename, inputCopy)
+    if err != nil {
+        return nil, err
+    }
+    p := parser{
+        Dispenser: NewDispenser(tokens),
+        importGraph: importGraph{
+            nodes: make(map[string]struct{}),
+            edges: make(adjacency),
+        },
+    }
+    return p.parseAll()
+}
+```
+
+## Common Patterns
+
+### HTTPS and TLS
+
+```caddyfile
+example.com {
+    # Automatic HTTPS is enabled by default
+    reverse_proxy localhost:8080
+}
+
+# Custom TLS configuration
+secure.example.com {
+    tls cert.pem key.pem
+    reverse_proxy localhost:8080
+}
+
+# Use internal CA for local development
+localhost {
+    tls internal
+}
+```
+
+### Multiple Routes
+
+```caddyfile
+example.com {
+    # Static files
+    handle /static/* {
+        root * /var/www/static
+        file_server
+    }
+    
+    # API proxy
+    handle /api/* {
+        reverse_proxy localhost:3000
+    }
+    
+    # Default handler
+    handle {
+        reverse_proxy localhost:8080
+    }
+}
+```
+
+### Health Checks and Logging
+
+```caddyfile
+localhost {
+    log {
+        output file ./caddy.access.log
+    }
+    
+    log health_check_log {
+        output file ./caddy.health.log
+        no_hostname
+    }
+    
+    @healthCheck path('/healthz*')
+    handle @healthCheck {
+        log_name health_check_log
+        respond "Healthy"
+    }
+    
+    handle {
+        respond "Hello World"
+    }
+}
+```
+
+## Best Practices
+
+<Note>
+**Formatting**: Use `caddy fmt` to automatically format your Caddyfile. The adapter checks formatting and warns if input differs from formatted output.
+</Note>
+
+1. **Use snippets** for common configuration blocks
+2. **Organize with imports** for large configurations
+3. **Define matchers** for complex routing logic
+4. **Add comments** to document your configuration
+5. **Test configs** with `caddy validate` before deploying
+
+## Error Handling
+
+Common parsing errors and their solutions:
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `unexpected token '{'` | Missing space before `{` | Add space: `directive {` |
+| `wrong argument count` | Missing required arguments | Check directive documentation |
+| `unexpected EOF` | Unclosed block | Add closing `}` |
+| `import pattern not found` | Invalid import path | Verify file exists |
+| `mismatched heredoc marker` | Incorrect closing marker | Match opening marker exactly |
+
+## See Also
+
+- [JSON Configuration](/config/json) - Caddy's native JSON format
+- [Configuration Structure](/config/structure) - Overall config organization
+- [HTTP Handlers](/modules/http/handlers) - Available HTTP handlers

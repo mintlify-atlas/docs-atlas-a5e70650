@@ -1,0 +1,390 @@
+---
+title: Reverse Proxy
+description: Highly configurable production-ready reverse proxy handler
+---
+
+The reverse proxy module is a powerful and flexible handler that proxies HTTP requests to upstream servers with load balancing, health checks, circuit breakers, and more.
+
+**Module ID:** `http.handlers.reverse_proxy`
+
+## Overview
+
+Upon proxying, the reverse proxy sets placeholders that can be used in subsequent handlers or logging:
+
+| Placeholder | Description |
+|------------|-------------|
+| `{http.reverse_proxy.upstream.address}` | Full address to the upstream as given in config |
+| `{http.reverse_proxy.upstream.hostport}` | Host:port of the upstream |
+| `{http.reverse_proxy.upstream.host}` | Host of the upstream |
+| `{http.reverse_proxy.upstream.port}` | Port of the upstream |
+| `{http.reverse_proxy.upstream.requests}` | Approximate current number of requests to the upstream |
+| `{http.reverse_proxy.upstream.max_requests}` | Maximum approximate number of requests allowed |
+| `{http.reverse_proxy.upstream.fails}` | Number of recent failed requests |
+| `{http.reverse_proxy.upstream.latency}` | Time for upstream to write response header |
+| `{http.reverse_proxy.upstream.latency_ms}` | Same as latency, but in milliseconds |
+| `{http.reverse_proxy.upstream.duration}` | Time spent proxying, including writing response body |
+| `{http.reverse_proxy.upstream.duration_ms}` | Same as duration, but in milliseconds |
+| `{http.reverse_proxy.duration}` | Total time spent proxying, including retries |
+| `{http.reverse_proxy.duration_ms}` | Same as duration, but in milliseconds |
+| `{http.reverse_proxy.retries}` | Number of retries actually performed |
+
+## Basic Configuration
+
+<ParamField path="upstreams" type="array">
+  Static list of backends to proxy to.
+  
+  <ResponseField name="dial" type="string" required>
+    The address to dial to reach the upstream. Supports placeholders and network addresses.
+    
+    Examples:
+    - `localhost:8080`
+    - `192.168.1.10:9000`  
+    - `unix//var/run/app.sock`
+  </ResponseField>
+  
+  <ResponseField name="max_requests" type="integer">
+    Maximum concurrent requests to this upstream. If exceeded, the upstream is considered unhealthy.
+  </ResponseField>
+</ParamField>
+
+<ParamField path="dynamic_upstreams" type="module">
+  Module for retrieving the list of upstreams dynamically. Dynamic upstreams are retrieved at every iteration of the proxy loop for each request.
+  
+  <Note type="warning">
+    Active health checks do not work on dynamic upstreams. Passive health checks are only effective if the proxy is busy enough that concurrent requests to the same backends are continuous.
+  </Note>
+  
+  Module namespace: `http.reverse_proxy.upstreams`
+</ParamField>
+
+## Transport
+
+<ParamField path="transport" type="module">
+  Configures the method of transport for the proxy. A transport performs the actual "round trip" to the backend. The default is plaintext HTTP.
+  
+  Module namespace: `http.reverse_proxy.transport`
+  
+  Available transports:
+  - `http` - Standard HTTP transport (default)
+  - `fastcgi` - FastCGI transport for PHP and other applications
+</ParamField>
+
+## Load Balancing
+
+<ParamField path="load_balancing" type="object">
+  Distributes load/requests between backends.
+  
+  <ResponseField name="selection_policy" type="module">
+    How to select an upstream from the pool. Default is `random`.
+    
+    Available policies:
+    - `random` - Select randomly
+    - `random_choose` - Select N randomly, pick least loaded
+    - `least_conn` - Pick upstream with fewest active requests
+    - `round_robin` - Cycle through upstreams sequentially
+    - `weighted_round_robin` - Round robin with weights
+    - `first` - Select first available
+    - `ip_hash` - Hash based on client IP
+    - `client_ip_hash` - Hash based on trusted client IP
+    - `uri_hash` - Hash based on request URI
+    - `query` - Hash based on query parameter
+    - `header` - Hash based on request header
+    - `cookie` - Hash based on cookie (with sticky sessions)
+  </ResponseField>
+  
+  <ResponseField name="try_duration" type="duration">
+    How long to try selecting available backends for each request.
+  </ResponseField>
+  
+  <ResponseField name="try_interval" type="duration" default="250ms">
+    How long to wait between selecting the next host when retrying.
+  </ResponseField>
+  
+  <ResponseField name="retries" type="integer">
+    Maximum number of retries (not counting the first attempt).
+  </ResponseField>
+  
+  <ResponseField name="retry_match" type="matcher">
+    Request matcher for determining which requests are idempotent and safe to retry. By default, only GET requests are retried.
+  </ResponseField>
+</ParamField>
+
+## Health Checks
+
+<ParamField path="health_checks" type="object">
+  Configures active and passive health checks.
+  
+  ### Active Health Checks
+  
+  <ResponseField name="active" type="object">
+    Run in the background on a timer. Do not work for dynamic upstreams.
+    
+    <ParamField path="uri" type="string">
+      The URI (path and query) to use for health checks.
+    </ParamField>
+    
+    <ParamField path="port" type="integer">
+      Alternative port to use for health checks (if different from upstream dial address).
+    </ParamField>
+    
+    <ParamField path="headers" type="object">
+      HTTP headers to set on health check requests.
+    </ParamField>
+    
+    <ParamField path="interval" type="duration" default="30s">
+      How frequently to perform active health checks.
+    </ParamField>
+    
+    <ParamField path="timeout" type="duration" default="5s">
+      How long to wait for a response before considering the backend unhealthy.
+    </ParamField>
+    
+    <ParamField path="passes" type="integer" default="1">
+      Number of consecutive passes before marking a previously unhealthy backend as healthy.
+    </ParamField>
+    
+    <ParamField path="fails" type="integer" default="1">
+      Number of consecutive failures before marking a previously healthy backend as unhealthy.
+    </ParamField>
+    
+    <ParamField path="expect_status" type="integer">
+      The HTTP status code to expect from a healthy backend.
+    </ParamField>
+    
+    <ParamField path="expect_body" type="string">
+      Regular expression to match against the response body of a healthy backend.
+    </ParamField>
+  </ResponseField>
+  
+  ### Passive Health Checks
+  
+  <ResponseField name="passive" type="object">
+    Monitor proxied requests for errors or timeouts. State is shared globally across all handlers.
+    
+    <ParamField path="fail_duration" type="duration">
+      How long to remember a failed request. Must be > 0 to enable passive health checks.
+    </ParamField>
+    
+    <ParamField path="max_fails" type="integer" default="1">
+      Number of failures within `fail_duration` to mark a backend as down.
+    </ParamField>
+    
+    <ParamField path="unhealthy_request_count" type="integer">
+      Mark backend as down if it has this many concurrent requests or more.
+    </ParamField>
+    
+    <ParamField path="unhealthy_status" type="array of integers">
+      HTTP status codes that count as failures.
+    </ParamField>
+    
+    <ParamField path="unhealthy_latency" type="duration">
+      Count request as failed if response takes at least this long.
+    </ParamField>
+  </ResponseField>
+</ParamField>
+
+## Circuit Breaker
+
+<ParamField path="circuit_breaker" type="module">
+  Acts as an early-warning system for health checks when backends are getting overloaded.
+  
+  Module namespace: `http.reverse_proxy.circuit_breakers`
+</ParamField>
+
+## Headers
+
+<ParamField path="headers" type="object">
+  Manipulates headers between Caddy and the backend.
+  
+  By default, all headers are passed through without changes, except for special hop-by-hop headers.
+  
+  `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` are set implicitly.
+  
+  <ResponseField name="request" type="object">
+    Header operations to apply to the request before sending to upstream.
+  </ResponseField>
+  
+  <ResponseField name="response" type="object">
+    Header operations to apply to the response before sending to client.
+  </ResponseField>
+</ParamField>
+
+<ParamField path="trusted_proxies" type="array of strings">
+  IP ranges (CIDR notation) from which X-Forwarded-* header values should be trusted. By default, no proxies are trusted.
+  
+  ```json
+  "trusted_proxies": ["10.0.0.0/8", "172.16.0.0/12"]
+  ```
+</ParamField>
+
+## Request/Response Handling
+
+<ParamField path="rewrite" type="object">
+  Rewrites the copy of the upstream request. Allows changing the request method and URI.
+  
+  The rewrite is applied to the copy, so it doesn't persist past the reverse proxy handler.
+  
+  If the method is changed to `GET` or `HEAD`, the request body will not be copied to the backend.
+</ParamField>
+
+<ParamField path="handle_response" type="array">
+  List of handlers to evaluate after successful roundtrips. The first handler that matches the response will be invoked.
+  
+  Three new placeholders available in this handler chain:
+  - `{http.reverse_proxy.status_code}` - Status code from response
+  - `{http.reverse_proxy.status_text}` - Status text from response  
+  - `{http.reverse_proxy.header.*}` - Headers from response
+  
+  ```json
+  "handle_response": [
+    {
+      "match": {
+        "status_code": [404]
+      },
+      "routes": [
+        {"handle": [{"handler": "file_server"}]}
+      ]
+    }
+  ]
+  ```
+</ParamField>
+
+## Buffering
+
+<ParamField path="request_buffers" type="integer (bytes)">
+  If nonzero, the entire request body up to this size will be read and buffered in memory before being proxied.
+  
+  <Note type="warning">
+    This should be avoided if possible for performance reasons, but could be useful if the backend is intolerant of read latency or chunked encodings.
+  </Note>
+</ParamField>
+
+<ParamField path="response_buffers" type="integer (bytes)">
+  If nonzero, the entire response body up to this size will be read and buffered in memory before being proxied to the client.
+</ParamField>
+
+<ParamField path="flush_interval" type="duration">
+  How often to flush the response buffer. By default, no periodic flushing is done.
+  
+  A negative value disables response buffering and flushes immediately after each write.
+</ParamField>
+
+## Streaming
+
+<ParamField path="stream_timeout" type="duration">
+  If nonzero, streaming requests such as WebSockets will be forcibly closed at the end of the timeout.
+</ParamField>
+
+<ParamField path="stream_close_delay" type="duration">
+  If nonzero, streaming requests will not be closed when the proxy config is unloaded. Instead, the stream will remain open until the delay is complete.
+  
+  This prevents streams from closing when Caddy's config is reloaded, avoiding a thundering herd of reconnecting clients.
+</ParamField>
+
+## Configuration Examples
+
+### Basic Reverse Proxy
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "upstreams": [
+    {"dial": "localhost:8080"}
+  ]
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy localhost:8080
+```
+</CodeGroup>
+
+### Multiple Upstreams with Load Balancing
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "upstreams": [
+    {"dial": "backend1:8080"},
+    {"dial": "backend2:8080"},
+    {"dial": "backend3:8080"}
+  ],
+  "load_balancing": {
+    "selection_policy": {
+      "policy": "least_conn"
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy backend1:8080 backend2:8080 backend3:8080 {
+    lb_policy least_conn
+}
+```
+</CodeGroup>
+
+### With Health Checks
+
+<CodeGroup>
+```json JSON
+{
+  "handler": "reverse_proxy",
+  "upstreams": [
+    {"dial": "backend:8080"}
+  ],
+  "health_checks": {
+    "active": {
+      "uri": "/health",
+      "interval": "30s",
+      "timeout": "5s"
+    },
+    "passive": {
+      "fail_duration": "30s",
+      "max_fails": 3,
+      "unhealthy_status": [500, 502, 503]
+    }
+  }
+}
+```
+
+```caddyfile Caddyfile
+reverse_proxy backend:8080 {
+    health_uri /health
+    health_interval 30s
+    health_timeout 5s
+    
+    fail_duration 30s
+    max_fails 3
+    unhealthy_status 500 502 503
+}
+```
+</CodeGroup>
+
+### With Header Manipulation
+
+```json
+{
+  "handler": "reverse_proxy",
+  "upstreams": [{"dial": "backend:8080"}],
+  "headers": {
+    "request": {
+      "set": {
+        "X-Real-IP": ["{http.request.remote.host}"],
+        "X-Custom-Header": ["value"]
+      }
+    },
+    "response": {
+      "add": {
+        "X-Served-By": ["Caddy"]
+      }
+    }
+  }
+}
+```
+
+<Note>
+The reverse proxy automatically adds `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` headers unless explicitly configured otherwise.
+</Note>

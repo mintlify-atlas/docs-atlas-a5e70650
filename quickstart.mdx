@@ -1,80 +1,220 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with Caddy in minutes
 ---
 
-## Get started in three steps
+Get Caddy up and running in minutes with this quick start guide. You'll learn how to serve static files and set up a reverse proxy with automatic HTTPS.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, make sure you have Caddy installed. See the [installation guide](/install) if you haven't installed Caddy yet.
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+Verify your installation:
+
+```bash
+caddy version
+```
+
+## Serve a Static Site
+
+<Steps>
+  <Step title="Create a simple HTML file">
+    Create an `index.html` file in a new directory:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    mkdir mysite
+    cd mysite
+    echo '<h1>Hello from Caddy!</h1>' > index.html
+    ```
+  </Step>
+  
+  <Step title="Start Caddy">
+    Run Caddy with the file server:
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    ```bash
+    caddy file-server
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    Your site is now available at `http://localhost:2015`
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Use a Caddyfile
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+For more control, create a `Caddyfile` in your site directory:
 
-### Step 3: Go live
+```caddyfile
+localhost
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+file_server
+```
 
-## Next steps
+Then start Caddy:
 
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+```bash
+caddy run
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+Caddy automatically looks for a `Caddyfile` in the current directory when you run `caddy run` without specifying a config.
 </Note>
+
+## Enable Automatic HTTPS
+
+To enable automatic HTTPS for a real domain:
+
+```caddyfile
+example.com
+
+file_server
+```
+
+<Warning>
+For automatic HTTPS to work:
+- You must own the domain
+- DNS must point to your server
+- Ports 80 and 443 must be open
+- Caddy must be publicly accessible
+</Warning>
+
+## Reverse Proxy
+
+Here's how to proxy requests to a backend application:
+
+```caddyfile
+localhost
+
+reverse_proxy localhost:8080
+```
+
+This forwards all requests to your application running on port 8080.
+
+### With Path-Based Routing
+
+```caddyfile
+localhost
+
+handle /api/* {
+    reverse_proxy localhost:8080
+}
+
+handle {
+    file_server
+}
+```
+
+## Common Caddyfile Patterns
+
+### Static Site with Compression
+
+```caddyfile
+example.com
+
+encode gzip
+file_server
+```
+
+### SPA (Single Page Application)
+
+```caddyfile
+example.com
+
+root * /var/www/myapp
+try_files {path} /index.html
+file_server
+```
+
+### Reverse Proxy with Custom Headers
+
+```caddyfile
+example.com
+
+reverse_proxy localhost:3000 {
+    header_up X-Real-IP {remote_host}
+}
+```
+
+### Multiple Sites
+
+```caddyfile
+site1.com {
+    root * /var/www/site1
+    file_server
+}
+
+site2.com {
+    reverse_proxy localhost:8080
+}
+```
+
+## Production Operations
+
+<Steps>
+  <Step title="Start Caddy as a service">
+    Use `caddy start` to run in the background:
+    
+    ```bash
+    caddy start
+    ```
+  </Step>
+  
+  <Step title="Check status">
+    ```bash
+    caddy list-modules
+    ```
+  </Step>
+  
+  <Step title="Reload configuration">
+    After changing your Caddyfile:
+    
+    ```bash
+    caddy reload
+    ```
+    
+    This performs a zero-downtime reload.
+  </Step>
+  
+  <Step title="Stop Caddy">
+    ```bash
+    caddy stop
+    ```
+  </Step>
+</Steps>
+
+## Using the Admin API
+
+Caddy's admin API runs on `localhost:2019` by default.
+
+### Get current config
+
+```bash
+curl localhost:2019/config/
+```
+
+### Load a new config
+
+```bash
+curl localhost:2019/load \
+  -H "Content-Type: application/json" \
+  -d @config.json
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts/architecture">
+    Learn about Caddy's architecture and module system
+  </Card>
+  
+  <Card title="Caddyfile" icon="file-code" href="/config/caddyfile">
+    Master the Caddyfile configuration format
+  </Card>
+  
+  <Card title="Reverse Proxy" icon="arrow-right-arrow-left" href="/guides/reverse-proxy">
+    Deep dive into reverse proxy configuration
+  </Card>
+  
+  <Card title="CLI Reference" icon="terminal" href="/cli/run">
+    Explore all Caddy commands
+  </Card>
+</CardGroup>

@@ -1,0 +1,541 @@
+---
+title: Creating Custom Builds
+description: Build production-ready Caddy binaries customized for your specific needs
+---
+
+Custom Caddy builds allow you to include only the modules you need, add third-party plugins, and optimize for your deployment environment.
+
+## Why Custom Builds?
+
+From `README.md:175` and the architecture:
+
+- **Extensibility**: Add functionality without modifying Caddy's source code
+- **Optimization**: Include only needed modules to reduce binary size
+- **Integration**: Bundle organization-specific plugins
+- **Version control**: Pin specific versions of Caddy and plugins
+- **Performance**: Compile for specific architectures
+
+<Note>
+Caddy's **highly extensible modular architecture** from `README.md:92` makes custom builds practical and maintainable.
+</Note>
+
+## Build Methods Overview
+
+<CardGroup cols={2}>
+  <Card title="xcaddy (Recommended)" icon="toolbox">
+    Fast, automated builds with plugin management
+  </Card>
+  <Card title="Manual Process" icon="code">
+    Full control over build configuration
+  </Card>
+</CardGroup>
+
+## Using xcaddy (Recommended)
+
+From `README.md:145`, xcaddy is the official build tool.
+
+### Install xcaddy
+
+```bash
+go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+```
+
+### Basic Custom Build
+
+```bash
+xcaddy build v2.8.0 \
+    --with github.com/caddy-dns/cloudflare \
+    --with github.com/greenpau/caddy-security \
+    --output /usr/local/bin/caddy
+```
+
+See the [xcaddy documentation](/dev/xcaddy) for complete details.
+
+## Manual Custom Build
+
+For full control, follow these steps from `README.md:151` and `cmd/caddy/main.go:15`:
+
+<Steps>
+
+<Step title="Create build directory">
+```bash
+mkdir caddy-custom
+cd caddy-custom
+```
+</Step>
+
+<Step title="Create main.go">
+Based on `cmd/caddy/main.go`:
+
+```go
+package main
+
+import (
+    _ "time/tzdata"
+
+    caddycmd "github.com/caddyserver/caddy/v2/cmd"
+
+    // Standard modules
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+
+    // Custom plugins
+    _ "github.com/caddy-dns/cloudflare"
+    _ "github.com/greenpau/caddy-security"
+    _ "github.com/mholt/caddy-ratelimit"
+)
+
+func main() {
+    caddycmd.Main()
+}
+```
+
+<Tip>
+The blank import `_` triggers the plugin's `init()` function which registers the module.
+</Tip>
+</Step>
+
+<Step title="Initialize Go module">
+```bash
+go mod init caddy-custom
+```
+</Step>
+
+<Step title="Pin Caddy version">
+```bash
+go get github.com/caddyserver/caddy/v2@v2.8.0
+```
+</Step>
+
+<Step title="Add plugin dependencies">
+```bash
+go get github.com/caddy-dns/cloudflare@latest
+go get github.com/greenpau/caddy-security@latest
+go get github.com/mholt/caddy-ratelimit@latest
+```
+</Step>
+
+<Step title="Tidy dependencies">
+```bash
+go mod tidy
+```
+</Step>
+
+<Step title="Build">
+From `README.md:159`:
+
+```bash
+go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -trimpath \
+    -o caddy
+```
+</Step>
+
+</Steps>
+
+## Standard Modules
+
+From `modules/standard/imports.go:1`, standard modules include:
+
+```go
+import (
+    _ "github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyevents"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyevents/eventsconfig"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyfs"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyhttp/standard"
+    _ "github.com/caddyserver/caddy/v2/modules/caddypki"
+    _ "github.com/caddyserver/caddy/v2/modules/caddypki/acmeserver"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls/distributedstek"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls/standardstek"
+    _ "github.com/caddyserver/caddy/v2/modules/filestorage"
+    _ "github.com/caddyserver/caddy/v2/modules/logging"
+    _ "github.com/caddyserver/caddy/v2/modules/metrics"
+)
+```
+
+<Warning>
+Do **not** remove `modules/standard` unless you know exactly which modules you need. Many features depend on these.
+</Warning>
+
+## Minimal Build
+
+For embedded systems or containers, create a minimal build:
+
+```go
+package main
+
+import (
+    _ "time/tzdata"
+    caddycmd "github.com/caddyserver/caddy/v2/cmd"
+    
+    // Only essential modules
+    _ "github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyhttp"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyhttp/fileserver"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls"
+)
+
+func main() {
+    caddycmd.Main()
+}
+```
+
+Build with maximum optimization:
+
+```bash
+CGO_ENABLED=0 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w -X github.com/caddyserver/caddy/v2.CustomVersion=v2.8.0-minimal" \
+    -trimpath
+```
+
+## Popular Plugin Combinations
+
+### DNS Provider Build
+
+For automated TLS with DNS-01 challenges:
+
+```go
+import (
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+    
+    // DNS providers
+    _ "github.com/caddy-dns/cloudflare"
+    _ "github.com/caddy-dns/route53"
+    _ "github.com/caddy-dns/digitalocean"
+)
+```
+
+### Enhanced Security Build
+
+```go
+import (
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+    
+    // Security enhancements
+    _ "github.com/greenpau/caddy-security"       // Auth portal, MFA
+    _ "github.com/mholt/caddy-ratelimit"         // Rate limiting
+    _ "github.com/porech/caddy-maxmind-geolocation" // GeoIP
+)
+```
+
+### Monitoring Build
+
+```go
+import (
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+    
+    // Monitoring and observability  
+    _ "github.com/caddyserver/caddy/v2/modules/caddyhttp/tracing" // OpenTelemetry
+)
+```
+
+The tracing module is from `modules/caddyhttp/tracing/module.go:15`.
+
+### Config Adapter Build
+
+```go
+import (
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+    
+    // Config adapters
+    _ "github.com/caddyserver/nginx-adapter"     // Nginx config
+    _ "github.com/caddyserver/yaml-adapter"      // YAML config
+)
+```
+
+## Version Information
+
+From `caddy.go:940`, inject custom version info:
+
+```bash
+go build -ldflags "-X github.com/caddyserver/caddy/v2.CustomVersion=v2.8.0-company-$(date +%Y%m%d)"
+```
+
+The version appears in:
+
+```bash
+./caddy version
+# v2.8.0-company-20260301
+```
+
+## Cross-Platform Builds
+
+### Linux AMD64
+
+```bash
+GOOS=linux GOARCH=amd64 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -o caddy-linux-amd64
+```
+
+### Windows AMD64
+
+```bash
+GOOS=windows GOARCH=amd64 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -o caddy-windows-amd64.exe
+```
+
+### macOS ARM64 (Apple Silicon)
+
+```bash
+GOOS=darwin GOARCH=arm64 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -o caddy-darwin-arm64
+```
+
+### Linux ARM64 (ARM servers)
+
+```bash
+GOOS=linux GOARCH=arm64 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -o caddy-linux-arm64
+```
+
+### Linux ARM (Raspberry Pi)
+
+```bash
+GOOS=linux GOARCH=arm GOARM=7 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -o caddy-linux-armv7
+```
+
+## Build Optimization
+
+### Reduce Binary Size
+
+```bash
+go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -trimpath
+```
+
+Flags:
+- `-tags`: Exclude optional dependencies
+- `-ldflags="-s -w"`: Strip debug info
+- `-trimpath`: Remove file paths
+
+Further compress with UPX:
+
+```bash
+upx --best --lzma caddy
+```
+
+### Static Binary
+
+From `README.md:93`, build with **no external dependencies**:
+
+```bash
+CGO_ENABLED=0 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w -extldflags '-static'" \
+    -trimpath
+```
+
+### Faster Builds
+
+Enable parallel compilation:
+
+```bash
+GO_BUILD_PARALLEL=8 go build
+```
+
+Use build cache:
+
+```bash
+# Cache is automatic, but can be cleared:
+go clean -cache
+```
+
+## Dockerfile Build
+
+Multi-stage build for minimal image:
+
+```dockerfile
+# Build stage
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /build
+
+# Copy main.go with plugin imports
+COPY main.go .
+RUN go mod init caddy-custom && \
+    go get github.com/caddyserver/caddy/v2@v2.8.0
+
+RUN CGO_ENABLED=0 go build \
+    -tags=nobadger,nomysql,nopgx \
+    -ldflags="-s -w" \
+    -trimpath \
+    -o caddy
+
+# Runtime stage
+FROM scratch
+
+COPY --from=builder /build/caddy /usr/bin/caddy
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+EXPOSE 80 443 2019
+
+ENTRYPOINT ["/usr/bin/caddy"]
+CMD ["run", "--config", "/etc/caddy/Caddyfile"]
+```
+
+## Automated Build Pipeline
+
+### GitHub Actions Example
+
+```yaml
+name: Build Custom Caddy
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      
+      - name: Install xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+      
+      - name: Build
+        run: |
+          xcaddy build v2.8.0 \
+            --with github.com/caddy-dns/cloudflare \
+            --output caddy-linux-amd64
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caddy-linux-amd64
+          path: caddy-linux-amd64
+```
+
+## Verification
+
+After building, verify your custom binary:
+
+```bash
+# Check version
+./caddy version
+
+# List all modules (verify plugins are included)
+./caddy list-modules
+
+# Search for specific plugin
+./caddy list-modules | grep cloudflare
+
+# Validate configuration
+./caddy validate --config Caddyfile
+
+# Test run
+./caddy run --config Caddyfile
+```
+
+## Distribution
+
+### Create Release Archive
+
+```bash
+tar -czf caddy-custom-v1.0.0-linux-amd64.tar.gz caddy
+```
+
+### Generate Checksums
+
+```bash
+sha256sum caddy-custom-v1.0.0-linux-amd64.tar.gz > checksums.txt
+```
+
+### Sign Release
+
+```bash
+gpg --armor --detach-sign caddy-custom-v1.0.0-linux-amd64.tar.gz
+```
+
+## Maintenance
+
+### Update Caddy Version
+
+```bash
+go get github.com/caddyserver/caddy/v2@v2.9.0
+go mod tidy
+go build
+```
+
+### Update Plugins
+
+```bash
+go get -u github.com/caddy-dns/cloudflare
+go mod tidy
+go build
+```
+
+### Security Updates
+
+```bash
+# Update all dependencies
+go get -u all
+go mod tidy
+
+# Verify no vulnerabilities
+go list -json -m all | nancy sleuth
+```
+
+## Best Practices
+
+<Tip>
+**Version everything**: Pin specific versions of Caddy and all plugins in production.
+</Tip>
+
+<Tip>
+**Test thoroughly**: Run your test suite against custom builds before deploying.
+</Tip>
+
+<Tip>
+**Document plugins**: Maintain a list of included plugins and their versions.
+</Tip>
+
+<Tip>
+**Automate builds**: Use CI/CD to build consistently across environments.
+</Tip>
+
+<Tip>
+**Keep builds minimal**: Only include plugins you actually use.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="xcaddy Tool" icon="toolbox" href="/dev/xcaddy">
+    Master xcaddy for easier custom builds
+  </Card>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Create your own custom modules
+  </Card>
+  <Card title="Testing Guide" icon="vial" href="/dev/testing">
+    Test your custom builds thoroughly
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/dev/contributing">
+    Share your build configurations
+  </Card>
+</CardGroup>

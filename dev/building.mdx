@@ -1,0 +1,359 @@
+---
+title: Building from Source
+description: Compile Caddy from source code for development and customization
+---
+
+Building Caddy from source gives you control over the build process and is essential for module development. This guide covers building for both development and production.
+
+## Requirements
+
+From `README.md:106`:
+
+- **[Go 1.25.0 or newer](https://golang.org/dl/)**
+
+<Warning>
+Older Go versions are not supported. Always use the version specified in the requirements.
+</Warning>
+
+## Quick Development Build
+
+For rapid development and testing, from `README.md:114`:
+
+<Steps>
+
+<Step title="Clone the repository">
+```bash
+git clone "https://github.com/caddyserver/caddy.git"
+cd caddy/cmd/caddy/
+```
+</Step>
+
+<Step title="Build the binary">
+```bash
+go build
+```
+
+This creates a `caddy` binary in the current directory.
+</Step>
+
+</Steps>
+
+<Note>
+These steps **will not embed proper version information**. For production builds with version info, see the next section.
+</Note>
+
+## Running Tests
+
+From `README.md:136`:
+
+### All Tests
+
+```bash
+go test ./...
+```
+
+### Specific Module
+
+```bash
+go test ./modules/caddyhttp/tracing/
+```
+
+<Tip>
+Run tests frequently during development to catch issues early.
+</Tip>
+
+## Permission to Bind Low Ports
+
+Caddy may need to bind to ports 80 and 443 for HTTPS. From `README.md:120`:
+
+### Linux
+
+```bash
+sudo setcap cap_net_bind_service=+ep ./caddy
+```
+
+### Using `go run`
+
+If you prefer `go run`, use the included helper script:
+
+```bash
+go run -exec ./setcap.sh main.go
+```
+
+### Passwordless setcap (Optional)
+
+To avoid entering your password repeatedly, from `README.md:128`:
+
+<Warning>
+Only do this if you understand the security implications!
+</Warning>
+
+```bash
+sudo visudo
+```
+
+Add this line (replace `username` with your actual username):
+
+```
+username ALL=(ALL:ALL) NOPASSWD: /usr/sbin/setcap
+```
+
+## Production Build with Version Info
+
+For builds with proper version information and/or plugins, use **[xcaddy](https://github.com/caddyserver/xcaddy)**.
+
+From `README.md:145`:
+
+```bash
+xcaddy build
+```
+
+See the [xcaddy documentation](/dev/xcaddy) for detailed information.
+
+## Manual Production Build Process
+
+The xcaddy tool automates these steps from `README.md:151`:
+
+<Steps>
+
+<Step title="Create a new folder">
+```bash
+mkdir caddy
+cd caddy
+```
+</Step>
+
+<Step title="Copy main.go">
+Copy [Caddy's main.go](https://github.com/caddyserver/caddy/blob/master/cmd/caddy/main.go) into the folder.
+
+From `cmd/caddy/main.go:15`:
+
+```go
+package main
+
+import (
+    _ "time/tzdata"
+    caddycmd "github.com/caddyserver/caddy/v2/cmd"
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+)
+
+func main() {
+    caddycmd.Main()
+}
+```
+
+Add imports for any custom plugins you want.
+</Step>
+
+<Step title="Initialize Go module">
+```bash
+go mod init caddy
+```
+</Step>
+
+<Step title="Pin Caddy version (optional)">
+```bash
+go get github.com/caddyserver/caddy/v2@version
+```
+
+Replace `version` with:
+- A git tag (e.g., `v2.8.0`)
+- A commit hash
+- A branch name (e.g., `master`)
+</Step>
+
+<Step title="Add plugins (optional)">
+Add plugin imports to `main.go`:
+
+```go
+import (
+    _ "time/tzdata"
+    caddycmd "github.com/caddyserver/caddy/v2/cmd"
+    _ "github.com/caddyserver/caddy/v2/modules/standard"
+    
+    // Your plugins
+    _ "github.com/example/caddy-plugin"
+)
+```
+</Step>
+
+<Step title="Build">
+```bash
+go build -tags=nobadger,nomysql,nopgx
+```
+</Step>
+
+</Steps>
+
+## Build Tags
+
+From `README.md:159`, the standard build uses these tags:
+
+```bash
+-tags=nobadger,nomysql,nopgx
+```
+
+These tags:
+- `nobadger`: Exclude BadgerDB support
+- `nomysql`: Exclude MySQL support  
+- `nopgx`: Exclude PostgreSQL support
+
+<Note>
+These databases are used by certain optional modules. Excluding them reduces binary size.
+</Note>
+
+## Custom Version Information
+
+From `caddy.go:940`, you can set a custom version at build time:
+
+```bash
+go build -ldflags '-X github.com/caddyserver/caddy/v2.CustomVersion=v2.8.0-custom'
+```
+
+The version is reported in:
+- `caddy version` command
+- Admin API responses
+- Server headers (if configured)
+
+## Build Output Location
+
+By default, `go build` creates the binary in the current directory:
+
+```bash
+# Build in current directory
+go build
+
+# Specify output location
+go build -o /usr/local/bin/caddy
+```
+
+## Cross-Compilation
+
+Build for different platforms:
+
+```bash
+# Linux AMD64
+GOOS=linux GOARCH=amd64 go build
+
+# Windows AMD64  
+GOOS=windows GOARCH=amd64 go build
+
+# macOS ARM64 (Apple Silicon)
+GOOS=darwin GOARCH=arm64 go build
+
+# Linux ARM64
+GOOS=linux GOARCH=arm64 go build
+```
+
+## Optimizing Binary Size
+
+Reduce binary size with build flags:
+
+```bash
+go build -ldflags=\"-s -w\" -trimpath
+```
+
+- `-s`: Strip symbol table
+- `-w`: Strip DWARF debugging info
+- `-trimpath`: Remove file system paths from binary
+
+<Tip>
+Combine with UPX compression for even smaller binaries:
+```bash
+upx --best --lzma caddy
+```
+</Tip>
+
+## Static Linking
+
+From `README.md:93`, Caddy runs with **no external dependencies** (not even libc):
+
+```bash
+CGO_ENABLED=0 go build
+```
+
+This creates a fully static binary that can run on any Linux system.
+
+## Module Imports
+
+From `modules/standard/imports.go:1`, standard modules are imported:
+
+```go
+package standard
+
+import (
+    // standard Caddy modules
+    _ "github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyevents"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyevents/eventsconfig"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyfs"
+    _ "github.com/caddyserver/caddy/v2/modules/caddyhttp/standard"
+    _ "github.com/caddyserver/caddy/v2/modules/caddypki"
+    _ "github.com/caddyserver/caddy/v2/modules/caddypki/acmeserver"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls/distributedstek"
+    _ "github.com/caddyserver/caddy/v2/modules/caddytls/standardstek"
+    _ "github.com/caddyserver/caddy/v2/modules/filestorage"
+    _ "github.com/caddyserver/caddy/v2/modules/logging"
+    _ "github.com/caddyserver/caddy/v2/modules/metrics"
+)
+```
+
+The blank imports (`_`) trigger `init()` functions that register modules.
+
+## Verification
+
+After building, verify your binary:
+
+```bash
+# Check version
+./caddy version
+
+# List all modules
+./caddy list-modules
+
+# Validate a config
+./caddy validate --config Caddyfile
+
+# Test run
+./caddy run --config Caddyfile
+```
+
+## Troubleshooting
+
+### Version Shows "unknown"
+
+From `README.md:112`, this happens with simple `go build`. Use xcaddy or manual steps for version info.
+
+### Module Not Found
+
+Ensure the module is imported in `main.go` and run:
+
+```bash
+go mod tidy
+```
+
+### Permission Denied on Ports
+
+Run `setcap` on the binary (Linux) or use sudo.
+
+### Large Binary Size
+
+Use optimization flags and consider excluding unused modules.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="xcaddy Tool" icon="toolbox" href="/dev/xcaddy">
+    Use xcaddy for easier builds with plugins
+  </Card>
+  <Card title="Custom Builds" icon="hammer" href="/dev/custom-builds">
+    Create custom builds with plugins
+  </Card>
+  <Card title="Module Development" icon="puzzle-piece" href="/dev/module-development">
+    Develop your own modules
+  </Card>
+  <Card title="Testing Guide" icon="vial" href="/dev/testing">
+    Test your custom builds
+  </Card>
+</CardGroup>

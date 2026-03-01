@@ -1,0 +1,180 @@
+---
+title: caddy run
+description: Start the Caddy server and run it in the foreground (daemon mode)
+---
+
+The `caddy run` command starts the Caddy server and blocks indefinitely, running Caddy in the foreground (daemon mode). This is the most common way to run Caddy in production.
+
+## Usage
+
+```bash
+caddy run [flags]
+```
+
+## Description
+
+Starts the Caddy process, optionally bootstrapped with an initial config file, and blocks indefinitely until the server is stopped. This runs Caddy in "daemon" mode where it stays in the foreground.
+
+If a config file is specified, it will be applied immediately after the process is running. If the config file is not in Caddy's native JSON format, you can specify an adapter with `--adapter` to adapt the given config file to Caddy's native format.
+
+<Note>
+**Special Case**: If the current working directory has a file called `Caddyfile` and the caddyfile config adapter is plugged in (default), then that file will be loaded and used to configure Caddy, even without any command line flags.
+</Note>
+
+## Flags
+
+<ParamField path="--config" type="string" default="">
+  Configuration file to load. Can be JSON or any format supported by an adapter. Use `-` to read from stdin.
+  
+  If not specified and a `Caddyfile` exists in the current directory, it will be used automatically.
+</ParamField>
+
+<ParamField path="--adapter" type="string" default="">
+  Name of config adapter to apply. Required if the config file is not in JSON format.
+  
+  Common adapters:
+  - `caddyfile` - Caddyfile format (default for files named Caddyfile)
+  - `yaml` - YAML format (if adapter is installed)
+</ParamField>
+
+<ParamField path="--envfile" type="string[]" default="[]">
+  Environment file(s) to load in KEY=VALUE format. Can be specified multiple times.
+  
+  Variables from the envfile will not overwrite existing environment variables.
+</ParamField>
+
+<ParamField path="--environ" type="boolean" default="false">
+  Print the environment as seen by the Caddy process before starting.
+  
+  This is the same as the `environ` command but does not quit after printing. Useful for troubleshooting.
+</ParamField>
+
+<ParamField path="--resume" type="boolean" default="false">
+  Use saved config if any (prefers autosave over `--config` file).
+  
+  The `--resume` flag will override the `--config` flag if there is a config autosave file. It is not an error if `--resume` is used and no autosave file exists.
+</ParamField>
+
+<ParamField path="--watch" type="boolean" default="false">
+  Watch config file for changes and reload it automatically.
+  
+  <Warning>
+  This can make unintentional config changes easier. Only use this option in a local development environment.
+  </Warning>
+</ParamField>
+
+<ParamField path="--pidfile" type="string" default="">
+  Path of file to which to write the process ID.
+  
+  Useful for process management and monitoring.
+</ParamField>
+
+<ParamField path="--pingback" type="string" default="">
+  Echo confirmation bytes to this address on success.
+  
+  This is used internally by `caddy start` and should not be used directly.
+</ParamField>
+
+## Examples
+
+### Run with default Caddyfile
+
+```bash
+caddy run
+```
+
+If a `Caddyfile` exists in the current directory, Caddy will automatically load it.
+
+### Run with a specific config file
+
+```bash
+caddy run --config /etc/caddy/Caddyfile
+```
+
+### Run with JSON config
+
+```bash
+caddy run --config config.json
+```
+
+### Run with config from stdin
+
+```bash
+cat Caddyfile | caddy run --config - --adapter caddyfile
+```
+
+### Run with environment file
+
+```bash
+caddy run --envfile .env --config Caddyfile
+```
+
+Example `.env` file:
+```bash
+SITE_ADDRESS=example.com
+API_KEY=secret123
+```
+
+### Run with auto-reload on config changes
+
+<Warning>
+Only use `--watch` in development environments!
+</Warning>
+
+```bash
+caddy run --config Caddyfile --watch
+```
+
+### Resume from last saved config
+
+```bash
+caddy run --resume
+```
+
+### Run and print environment
+
+```bash
+caddy run --environ --config Caddyfile
+```
+
+## Exit Codes
+
+- `0` - Success
+- `1` - Failed startup
+- `2` - Failed quit (graceful shutdown failed)
+
+## Environment Variables
+
+Caddy respects several environment variables:
+
+- `HOME` / `USERPROFILE` - Used to determine default data directories
+- `XDG_DATA_HOME` - Custom data directory (Unix)
+- `XDG_CONFIG_HOME` - Custom config directory (Unix)
+- `XDG_CACHE_HOME` - Custom cache directory (Unix)
+
+<Note>
+If using environment variables in your config (e.g., `{env.VARIABLE}`), you can verify them with `caddy environ` or `caddy run --environ`.
+</Note>
+
+## Implementation Details
+
+The command performs the following steps:
+
+1. Traps signals for graceful shutdown
+2. Sets up buffered logging for early startup
+3. Configures resource limits (GOMAXPROCS, memory limits)
+4. Loads environment files if specified
+5. Loads and adapts the configuration
+6. Creates PID file if requested
+7. Applies the configuration
+8. Sends pingback confirmation if requested (internal use)
+9. Watches config file for changes if `--watch` is enabled
+10. Blocks indefinitely until shutdown signal
+
+## Related Commands
+
+- [`caddy start`](/cli/start) - Start Caddy in the background
+- [`caddy stop`](/cli/stop) - Stop a running Caddy instance
+- [`caddy reload`](/cli/reload) - Reload the configuration
+- [`caddy adapt`](/cli/adapt) - Test config adaptation
+- [`caddy validate`](/cli/validate) - Validate a configuration file
